@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <atomic>
 
+#include "button.h"
 #include "config.h"
 #include "quadrature.h"
 
@@ -28,25 +29,10 @@ void onEncoderEdge() {
     if (detent) pendingDetents.fetch_add(detent, std::memory_order_relaxed);
 }
 
-// Push button (active low): debounced by requiring a stable level.
-bool buttonStable = false;     // true = pressed
-bool buttonLastRead = false;
-uint32_t buttonChangedMs = 0;
-
-bool buttonPressedEdge() {
-    const bool pressed = digitalRead(cfg::PIN_ENC_BUTTON) == LOW;
-    const uint32_t now = millis();
-    if (pressed != buttonLastRead) {
-        buttonLastRead = pressed;
-        buttonChangedMs = now;
-        return false;
-    }
-    if (pressed != buttonStable && now - buttonChangedMs >= cfg::BUTTON_DEBOUNCE_MS) {
-        buttonStable = pressed;
-        return pressed;
-    }
-    return false;
-}
+// Buttons are active low (pressed = pin pulled to ground). The encoder
+// button only uses Pressed, so its press-length limits don't matter.
+Button encoderButton(cfg::BUTTON_DEBOUNCE_MS, UINT32_MAX, UINT32_MAX);
+Button actionButton(cfg::BUTTON_DEBOUNCE_MS, cfg::ACTION_SHORT_PRESS_MAX_MS, cfg::ACTION_LONG_PRESS_MS);
 
 // Move a 0..1 value by whole percent steps. Working in integer percent keeps
 // repeated steps exact (0.05 isn't exact in binary floating point).
@@ -67,6 +53,7 @@ void begin(Settings& s) {
     pinMode(cfg::PIN_ENC_A, INPUT_PULLUP);
     pinMode(cfg::PIN_ENC_B, INPUT_PULLUP);
     pinMode(cfg::PIN_ENC_BUTTON, INPUT_PULLUP);
+    pinMode(cfg::PIN_ACTION_BUTTON, INPUT_PULLUP);
     decoder = QuadratureDecoder(readAB());
     // Attached from core 0, so the interrupts run on core 0 and never
     // disturb the audio core.
@@ -86,16 +73,24 @@ bool adjustBalance(int steps) {
     return true;
 }
 
-bool poll() {
-    if (buttonPressedEdge()) {
+Action poll() {
+    const uint32_t now = millis();
+    if (encoderButton.update(digitalRead(cfg::PIN_ENC_BUTTON) == LOW, now) == Button::Event::Pressed) {
         currentMode = currentMode == Mode::Volume ? Mode::Balance : Mode::Volume;
         Serial.printf("[encoder] mode: %s\n", currentMode == Mode::Volume ? "volume" : "balance");
         // TODO(beeps): 2 short high beeps for volume, 3 for balance (beep_profiles.py).
     }
     int32_t detents = pendingDetents.exchange(0, std::memory_order_relaxed);
-    if (detents == 0) return false;
-    if (cfg::ENCODER_REVERSED) detents = -detents;
-    return currentMode == Mode::Volume ? adjustVolume(detents) : adjustBalance(detents);
+    if (detents != 0) {
+        if (cfg::ENCODER_REVERSED) detents = -detents;
+        if (currentMode == Mode::Volume) adjustVolume(detents);
+        else adjustBalance(detents);
+    }
+    switch (actionButton.update(digitalRead(cfg::PIN_ACTION_BUTTON) == LOW, now)) {
+        case Button::Event::ShortPress: return Action::NextPack;
+        case Button::Event::LongPress: return Action::FactoryReset;
+        default: return Action::None;
+    }
 }
 
 Mode mode() { return currentMode; }

@@ -1,5 +1,6 @@
 // Host-side unit tests for the platform-independent firmware code:
-// WAV parsing, the power log sector format, encoder decoding, the SPSC ring buffer and the mixer (including a two-thread
+// WAV parsing, the power log and persisted-state formats, encoder and
+// button handling, the SPSC ring buffer and the mixer (including a two-thread
 // producer/consumer test that mirrors core 0 / core 1).
 //
 // Run: test/run_native_tests.sh [path/to/HDDSynth_Samples]
@@ -15,6 +16,9 @@
 #include <vector>
 
 #include "mixer.h"
+#include "button.h"
+#include "crc32.h"
+#include "persist_format.h"
 #include "powerlog_format.h"
 #include "quadrature.h"
 #include "ring_buffer.h"
@@ -370,9 +374,9 @@ TEST(mixer_stream_two_threads_no_gaps) {
 
 // ---- power log sector format ------------------------------------------------
 
-TEST(powerlog_crc32_known_value) {
+TEST(crc32_known_value) {
     const char* s = "123456789";  // the standard CRC-32 check value
-    CHECK_EQ(powerlog::crc32(reinterpret_cast<const uint8_t*>(s), 9), 0xCBF43926u);
+    CHECK_EQ(crc32(reinterpret_cast<const uint8_t*>(s), 9), 0xCBF43926u);
 }
 
 TEST(powerlog_sector_round_trip) {
@@ -461,6 +465,108 @@ TEST(quadrature_missed_transition_still_counts) {
     CHECK_EQ(feed(d, {0b11, 0b11, 0b01, 0b01, 0b00, 0b10, 0b10, 0b11}), 1);
 }
 
+
+// ---- buttons ------------------------------------------------------------------
+
+using Ev = Button::Event;
+
+// Hold the raw state from `fromMs` to `toMs` (1 ms steps); return the events seen.
+static std::vector<Ev> hold(Button& b, bool pressed, uint32_t fromMs, uint32_t toMs) {
+    std::vector<Ev> events;
+    for (uint32_t i = 0; i < toMs - fromMs; ++i) {  // counts, so a wrapped range works too
+        const Ev e = b.update(pressed, fromMs + i);
+        if (e != Ev::None) events.push_back(e);
+    }
+    return events;
+}
+
+TEST(button_short_press_fires_on_release) {
+    Button b(20, 1000, 3000);
+    auto down = hold(b, true, 0, 300);
+    CHECK(down.size() == 1 && down[0] == Ev::Pressed);
+    auto up = hold(b, false, 300, 400);
+    CHECK(up.size() == 1 && up[0] == Ev::ShortPress);
+}
+
+TEST(button_long_press_fires_while_held_and_once) {
+    Button b(20, 1000, 3000);
+    auto events = hold(b, true, 0, 5000);
+    CHECK(events.size() == 2 && events[0] == Ev::Pressed && events[1] == Ev::LongPress);
+    auto up = hold(b, false, 5000, 5100);  // no short press after a long one
+    CHECK(up.empty());
+}
+
+TEST(button_medium_press_does_nothing) {
+    Button b(20, 1000, 3000);
+    hold(b, true, 0, 2000);  // longer than a short press, shorter than a long one
+    CHECK(hold(b, false, 2000, 2100).empty());
+}
+
+TEST(button_debounces_bounce_and_glitches) {
+    Button b(20, 1000, 3000);
+    // A 5 ms glitch is ignored entirely.
+    CHECK(hold(b, true, 0, 5).empty());
+    CHECK(hold(b, false, 5, 100).empty());
+    // A bouncy press (chatter for 10 ms) is one press and one short press.
+    std::vector<Ev> events;
+    for (uint32_t t = 100; t < 110; ++t) {
+        const Ev e = b.update(t % 2, t);
+        if (e != Ev::None) events.push_back(e);
+    }
+    for (Ev e : hold(b, true, 110, 400)) events.push_back(e);
+    for (Ev e : hold(b, false, 400, 500)) events.push_back(e);
+    CHECK(events.size() == 2 && events[0] == Ev::Pressed && events[1] == Ev::ShortPress);
+}
+
+TEST(button_millis_wraparound) {
+    Button b(20, 1000, 3000);
+    const uint32_t start = 0xFFFFFF00u;  // millis() wraps every 49.7 days
+    hold(b, true, start, start + 500);
+    auto up = hold(b, false, start + 500, start + 600);
+    CHECK(up.size() == 1 && up[0] == Ev::ShortPress);
+}
+
+// ---- persisted state format ---------------------------------------------------
+
+TEST(persist_round_trip) {
+    PersistedState in;
+    std::strcpy(in.desiredPack, "PB_MicroScience612");
+    in.jinglePlayed = true;
+    uint8_t rec[persistfmt::RECORD_BYTES];
+    persistfmt::encode(in, rec);
+    PersistedState out;
+    CHECK(persistfmt::decode(rec, out));
+    CHECK(std::strcmp(out.desiredPack, "PB_MicroScience612") == 0);
+    CHECK(out.jinglePlayed);
+}
+
+TEST(persist_rejects_blank_and_corrupt) {
+    uint8_t rec[persistfmt::RECORD_BYTES];
+    PersistedState out;
+    std::memset(rec, 0xFF, sizeof(rec));  // erased flash
+    CHECK(!persistfmt::decode(rec, out));
+    CHECK(out.desiredPack[0] == 0 && !out.jinglePlayed);  // defaults
+    std::memset(rec, 0x00, sizeof(rec));
+    CHECK(!persistfmt::decode(rec, out));
+
+    PersistedState in;
+    std::strcpy(in.desiredPack, "Mark1");
+    persistfmt::encode(in, rec);
+    rec[10] ^= 0x20;  // one flipped bit in the pack name
+    CHECK(!persistfmt::decode(rec, out));
+    CHECK(out.desiredPack[0] == 0);
+}
+
+TEST(persist_long_name_is_truncated_and_terminated) {
+    PersistedState in;
+    std::memset(in.desiredPack, 'x', sizeof(in.desiredPack));  // no terminator at all
+    uint8_t rec[persistfmt::RECORD_BYTES];
+    persistfmt::encode(in, rec);
+    PersistedState out;
+    CHECK(persistfmt::decode(rec, out));
+    CHECK_EQ(std::strlen(out.desiredPack), sizeof(out.desiredPack) - 1);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -469,7 +575,7 @@ int main(int argc, char** argv) {
     RUN(wav_bogus_data_length_clamped);
     RUN(wav_rejects);
     RUN(wav_real_sample_packs);
-    RUN(powerlog_crc32_known_value);
+    RUN(crc32_known_value);
     RUN(powerlog_sector_round_trip);
     RUN(powerlog_sector_full_and_clamped);
     RUN(powerlog_sector_rejects_blank_and_torn);
@@ -477,6 +583,14 @@ int main(int argc, char** argv) {
     RUN(quadrature_reports_only_at_rest);
     RUN(quadrature_contact_bounce_cancels);
     RUN(quadrature_missed_transition_still_counts);
+    RUN(button_short_press_fires_on_release);
+    RUN(button_long_press_fires_while_held_and_once);
+    RUN(button_medium_press_does_nothing);
+    RUN(button_debounces_bounce_and_glitches);
+    RUN(button_millis_wraparound);
+    RUN(persist_round_trip);
+    RUN(persist_rejects_blank_and_corrupt);
+    RUN(persist_long_name_is_truncated_and_terminated);
     RUN(ring_wraparound);
     RUN(ring_two_threads);
     RUN(mixer_unity_passthrough_and_end);

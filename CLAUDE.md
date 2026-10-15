@@ -128,7 +128,10 @@ trigger the release workflow.
   (`startStream`, `startMemory`, `stop`, `setLevel`).
 - `sd_streamer.*`: core 0 only. WAV parsing, ring refill, looping, retries,
   card re-init and file reopen.
-- `controls.*`: rotary encoder (pin interrupts on core 0) and its button.
+- `controls.*`: rotary encoder (pin interrupts on core 0), its button and the
+  action button (`button.h`: debounce and short/long press, host-tested).
+- `persist.*`: saved pack and jingle flag in the EEPROM-emulation flash
+  sector; `persist_format.*` is the CRC-checked record (host-tested).
 - `power.*`: FLT interrupt with 3 ms confirm, supercap ADC, restore detection.
 - `powerlog.*`: from power loss onwards, logs power lines to `/powerlog.bin`
   with raw sector writes so they survive the board dying; `l` prints them.
@@ -151,13 +154,13 @@ The first thing to confirm is that the build boots on the RP2354A.
 - [x] Rotary encoder: volume / balance, with button toggling the mode
       (`controls.*`, decoding in `quadrature.h`). Mode-change beeps are a
       TODO until beeps are ported.
-- [ ] Action button: short press = next pack, long press = factory reset
-      (`action_button.py`). Pack switching should hot-swap streams, with no
-      reboot or caching needed.
+- [x] Action button: short press = next pack (hot swap, no reboot, saved),
+      long press = factory reset (clears saved state, reboots). Beeps TODO.
 - [ ] Beeps and RGB flash patterns (`beep.py`, `beep_profiles.py`)
-- [ ] NVM persistence: desired pack, jingle-played flag, volume/balance with
-      a debounce (`nvm_wrapper.py`, `persisted_float.py`). Never write while
-      audio is playing.
+- [ ] NVM persistence: desired pack and jingle flag are done (`persist.*`);
+      volume/balance with a debounce still to do (`persisted_float.py`,
+      off by default in Python). Flash writes pause core 1, so only write
+      with the audio stopped and the amp muted (e.g. on a pack change).
 - [ ] Jingle on first boot; `RANDOM_SAMPLE_PACK`
 - [ ] OLED (I2C on GP24/25) when the hardware is fitted
 - [ ] Remove `WAIT_FOR_SERIAL_MS` for release builds

@@ -47,6 +47,7 @@ void closeStream(Stream& s);
 bool loadToRam(const char* path, int16_t*& data, uint32_t& samples);
 
 // Packs are the directories in /samples, sorted case-insensitively.
+bool packExists(const char* name);  // false for ""
 // Find a pack: `preferred` if it exists, else the first directory in /samples.
 bool choosePack(const char* preferred, char* out, size_t outLen);
 // Position of `name` in the sorted list, or -1.

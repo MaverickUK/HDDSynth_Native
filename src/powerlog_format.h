@@ -27,6 +27,4 @@ void encodeSector(uint8_t* out, uint32_t session, uint16_t index, const char* te
 // sector is blank, from another format, or fails its CRC.
 int decodeSector(const uint8_t* in, uint32_t& session, uint16_t& index, const char*& text);
 
-uint32_t crc32(const uint8_t* data, size_t len);
-
 } // namespace powerlog

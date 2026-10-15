@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "crc32.h"
+
 namespace powerlog {
 
 namespace {
@@ -24,24 +26,13 @@ uint16_t get16(const uint8_t* p) {
     return v;
 }
 
-// Standard CRC-32 (as zlib), bit by bit: small, and speed is irrelevant here.
-uint32_t crcUpdate(uint32_t c, const uint8_t* data, size_t len) {
-    for (size_t i = 0; i < len; ++i) {
-        c ^= data[i];
-        for (int k = 0; k < 8; ++k) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
-    }
-    return c;
-}
-
 // CRC of the first 12 header bytes followed by the text.
 uint32_t headerAndTextCrc(const uint8_t* sector, size_t len) {
-    const uint32_t c = crcUpdate(0xFFFFFFFFu, sector, 12);
-    return ~crcUpdate(c, sector + HEADER_BYTES, len);
+    const uint32_t c = crc32Update(0xFFFFFFFFu, sector, 12);
+    return ~crc32Update(c, sector + HEADER_BYTES, len);
 }
 
 } // namespace
-
-uint32_t crc32(const uint8_t* data, size_t len) { return ~crcUpdate(0xFFFFFFFFu, data, len); }
 
 void encodeSector(uint8_t* out, uint32_t session, uint16_t index, const char* text, size_t len) {
     if (len > TEXT_BYTES) len = TEXT_BYTES;

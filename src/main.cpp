@@ -8,7 +8,6 @@
 // n next sample pack (for testing), l print the last power-loss log,
 // r reboot, b reboot to USB bootloader.
 #include <Arduino.h>
-#include <hardware/structs/watchdog.h>
 
 #include <initializer_list>
 
@@ -16,6 +15,7 @@
 #include "config.h"
 #include "controls.h"
 #include "io.h"
+#include "persist.h"
 #include "power.h"
 #include "powerlog.h"
 #include "sd_streamer.h"
@@ -60,12 +60,6 @@ State state = State::Boot;
 Settings settings;
 char pack[64] = {0};
 
-// The serial 'n' command picks a pack by index and reboots. The index
-// survives the reboot in watchdog scratch registers, which keep their value
-// across resets until power is removed. scratch[0..3] are free for
-// applications; the SDK uses 4..7 for its own reboot handling.
-constexpr uint32_t PACK_OVERRIDE_MAGIC = 0x5041434B;  // "PACK"
-
 // One shared ring for the one-shot samples (spinup at boot, spindown if it
 // has to stream), plus one per looping voice.
 SampleRing ringOneShot;
@@ -93,6 +87,10 @@ uint32_t nextStatsMs = 0;
 uint32_t nextPowerTraceMs = 0;
 uint32_t lastLoopStartUs = 0;
 uint32_t maxLoopGapUs = 0;  // longest gap between loop() passes since power loss
+
+void enterRun();
+void changePack();
+void factoryReset();
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -299,16 +297,10 @@ void handleSerial() {
             case '-':
                 controls::adjustVolume(c == '+' ? 1 : -1);
                 break;
-            case 'n': {
-                const int next = sd::packIndex(pack) + 1;
-                watchdog_hw->scratch[0] = PACK_OVERRIDE_MAGIC;
-                watchdog_hw->scratch[1] = static_cast<uint32_t>(next);
-                io::ampOff();
-                Serial.println("[pack] switching to the next pack, rebooting");
-                Serial.flush();
-                rp2040.reboot();
+            case 'n':
+                if (state == State::Run) changePack();
+                else Serial.println("[pack] only in RUN");
                 break;
-            }
             case 'l': powerlog::printLast(); break;
             case 'r': rp2040.reboot(); break;
             case 'b': rp2040.rebootToBootloader(); break;
@@ -318,6 +310,92 @@ void handleSerial() {
 }
 
 // ---- states ------------------------------------------------------------------
+
+// ---- sample packs ------------------------------------------------------------
+
+// Open idle/access for `pack` and load its spindown into RAM (or leave it to
+// stream; enterRun() arms it). Logs and returns false if the pack is unusable.
+bool loadPack() {
+    Serial.printf("[pack] %s\n", pack);
+    char p[128];
+    samplePath(p, sizeof(p), "idle.wav");
+    const bool idleOk = sd::openStream(streamIdle, p, VOICE_IDLE, &ringIdle, true);
+    samplePath(p, sizeof(p), "access.wav");
+    const bool accessOk = sd::openStream(streamAccess, p, VOICE_ACCESS, &ringAccess, true);
+    if (!accessOk || (settings.playIdle && !idleOk)) {
+        Serial.printf("[pack] %s is missing idle.wav/access.wav or they are the wrong format\n", pack);
+        return false;
+    }
+    samplePath(p, sizeof(p), "spindown.wav");
+    if (!FORCE_STREAMED_SPINDOWN && sd::loadToRam(p, spindownRam, spindownSamples)) {
+        Serial.printf("[pack] spindown in RAM (%lu ms)\n", static_cast<unsigned long>(samplesToMs(spindownSamples)));
+    } else {
+        Serial.println("[pack] spindown will stream from SD");
+    }
+    return true;
+}
+
+// Close the pack's streams and free its spindown. The voices must be stopped.
+void unloadPack() {
+    sd::closeStream(streamIdle);
+    sd::closeStream(streamAccess);
+    sd::closeStream(streamSpindown);
+    free(spindownRam);
+    spindownRam = nullptr;
+    spindownSamples = 0;
+    spindownArmed = false;
+}
+
+void stopPackVoices() {
+    stopStress();
+    for (VoiceId id : {VOICE_IDLE, VOICE_ACCESS, VOICE_SPINDOWN}) audio::stop(id);
+    io::ampOff();
+    io::rgbOff();
+    io::hddLed(false);
+    lastAccess = false;
+}
+
+// Short press of the action button (or serial 'n'): switch to the next pack
+// without rebooting, and remember it (sample_changer.next_pack() plus the
+// reload callback in the CircuitPython firmware). Spinup is not replayed.
+void changePack() {
+    stopPackVoices();
+    unloadPack();
+    // TODO(beeps): CHANGE_PACK beep (beep_profiles.py).
+    const int current = sd::packIndex(pack);  // -1 if it has gone: start from the first
+    int count = 0;
+    for (int step = 1;; ++step) {
+        if (!sd::packByIndex(current + step, pack, sizeof(pack), count) || step > count) {
+            halt("no usable sample pack");
+            return;
+        }
+        if (loadPack()) break;
+        unloadPack();  // broken pack: try the next one
+    }
+    PersistedState& saved = persist::state();
+    strncpy(saved.desiredPack, pack, sizeof(saved.desiredPack) - 1);
+    // The audio is stopped and the amp muted, so pausing core 1 for the flash
+    // write is harmless. Don't let the stall detector mistake it for a hang.
+    const uint32_t ms = persist::commit();
+    if (ms) Serial.printf("[persist] saved pack in %lu ms\n", static_cast<unsigned long>(ms));
+    lastHeartbeatChangeMs = millis();
+    if (settings.playIdle) sd::prime(streamIdle);
+    sd::prime(streamAccess);
+    io::ampOn();
+    enterRun();
+}
+
+// Long press (3 s) of the action button: forget the chosen pack and the
+// jingle flag, then reboot into the defaults (action_button.py).
+void factoryReset() {
+    Serial.println("[pack] factory reset");
+    stopPackVoices();
+    // TODO(beeps): FACTORY_RESET beep (beep_profiles.py).
+    persist::state() = PersistedState{};
+    persist::commit();
+    Serial.flush();
+    rp2040.reboot();
+}
 
 const char* resetReasonName() {
     switch (rp2040.getResetReason()) {
@@ -352,38 +430,28 @@ void boot() {
     printSettings(settings);
     power::begin(settings.powerDetection);
     powerlog::begin();
+    persist::begin();
 
-    bool havePack = false;
-    if (watchdog_hw->scratch[0] == PACK_OVERRIDE_MAGIC) {
-        int count = 0;
-        const int index = static_cast<int>(watchdog_hw->scratch[1]);
-        havePack = sd::packByIndex(index, pack, sizeof(pack), count);
-        if (havePack) Serial.printf("[boot] pack override %d of %d (serial 'n')\n", index % count + 1, count);
+    // Which pack: SAMPLE_PACK in settings.json wins (as in the CircuitPython
+    // firmware), then the one last chosen with the action button, then the
+    // first pack on the card.
+    const char* preferred = persist::state().desiredPack;
+    if (settings.samplePack[0]) {
+        if (sd::packExists(settings.samplePack)) preferred = settings.samplePack;
+        else Serial.printf("[boot] SAMPLE_PACK '%s' not found\n", settings.samplePack);
     }
-    if (!havePack && !sd::choosePack(settings.samplePack, pack, sizeof(pack))) {
+    if (!sd::choosePack(preferred, pack, sizeof(pack))) {
         halt("no sample packs in /samples");
         return;
     }
-    Serial.printf("[boot] pack: %s\n", pack);
-
-    char p[128];
-    samplePath(p, sizeof(p), "idle.wav");
-    const bool idleOk = sd::openStream(streamIdle, p, VOICE_IDLE, &ringIdle, true);
-    samplePath(p, sizeof(p), "access.wav");
-    const bool accessOk = sd::openStream(streamAccess, p, VOICE_ACCESS, &ringAccess, true);
-    if (!accessOk || (settings.playIdle && !idleOk)) {
-        halt("pack is missing idle.wav/access.wav or they are the wrong format");
+    if (FORCE_STREAMED_SPINDOWN) Serial.println("[boot] test build: FORCE_STREAMED_SPINDOWN");
+    if (!loadPack()) {
+        halt("pack is missing idle.wav/access.wav or they are the wrong format (hold the action button 3 s to reset)");
         return;
     }
-
-    samplePath(p, sizeof(p), "spindown.wav");
-    if (FORCE_STREAMED_SPINDOWN) Serial.println("[boot] test build: FORCE_STREAMED_SPINDOWN");
-    if (!FORCE_STREAMED_SPINDOWN && sd::loadToRam(p, spindownRam, spindownSamples)) {
-        Serial.printf("[boot] spindown in RAM (%lu ms)\n", static_cast<unsigned long>(samplesToMs(spindownSamples)));
-    } else {
-        Serial.println("[boot] spindown will stream from SD");
-    }
     Serial.printf("[boot] free heap %d\n", rp2040.getFreeHeap());
+
+    char p[128];
 
     rp2040.wdt_begin(cfg::WATCHDOG_MS);
     lastHeartbeatChangeMs = millis();
@@ -472,18 +540,22 @@ void loop() {
 
         case State::Spinup:
             sd::pump();
-            controls::poll();
+            controls::poll();  // pack changes wait for RUN; volume applies straight away
+            audio::setLevel(VOICE_SPINUP, levelFromFloat(settings.volume));
             powerTrace("spinup");
             if (power::lost()) enterSpindown();
             else if (!audio::isPlaying(VOICE_SPINUP)) enterRun();
             break;
 
-        case State::Run:
+        case State::Run: {
             sd::pump();
-            controls::poll();
+            const controls::Action action = controls::poll();
             if (power::lost()) enterSpindown();
+            else if (action == controls::Action::NextPack) changePack();
+            else if (action == controls::Action::FactoryReset) factoryReset();
             else runStep();
             break;
+        }
 
         case State::Spindown:
             sd::pump();
@@ -505,6 +577,8 @@ void loop() {
             break;
 
         case State::Halted:
+            // A factory reset is still possible, e.g. when the saved pack is broken.
+            if (controls::poll() == controls::Action::FactoryReset) factoryReset();
             // Blink red so a headless unit shows the fault; serial stays alive.
             if ((millis() / 500) % 2) io::rgb(255, 0, 0);
             else io::rgbOff();

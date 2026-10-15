@@ -99,7 +99,7 @@ t  stress test on/off: restarts streamed voices every 30-250 ms
 p  simulate power loss (runs the spindown path)
 a  toggle simulated HDD activity
 +  / -  volume
-n  next sample pack (reboots; kept until power is removed)
+n  next sample pack (same as a short press of the action button; remembered)
 l  print the log of the last power loss (kept on the SD card)
 r  reboot
 b  reboot into the USB bootloader

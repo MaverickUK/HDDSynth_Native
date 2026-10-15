@@ -329,6 +329,13 @@ bool nextPackName(const char* after, char* out, size_t outLen) {
     return out[0] != 0;
 }
 
+bool packExists(const char* name) {
+    if (!mounted || !name || !name[0]) return false;
+    char path[128];
+    snprintf(path, sizeof(path), "/samples/%s", name);
+    return card.exists(path);
+}
+
 bool choosePack(const char* preferred, char* out, size_t outLen) {
     char path[128];
     if (preferred && preferred[0]) {
