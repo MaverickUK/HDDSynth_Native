@@ -1,0 +1,88 @@
+# Build the firmware and run the host-side tests on every push and pull
+# request. A tag vX.Y.Z also publishes a GitHub release with the UF2, after
+# checking that the tag matches FIRMWARE_VERSION in src/version.h.
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  test:
+    name: Host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the sample packs (every WAV gets parsed)
+        uses: actions/checkout@v4
+        with:
+          repository: MaverickUK/HDDSynth_Samples
+          path: samples
+      - run: test/run_native_tests.sh samples
+
+  build:
+    name: Firmware
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+      - run: pip install platformio
+      - run: pio run -e mk5 -e mk5_stream_test
+
+      - name: Read the firmware version
+        id: version
+        run: |
+          version=$(sed -n 's/.*FIRMWARE_VERSION "\(.*\)".*/\1/p' src/version.h)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Firmware version $version"
+
+      - name: Check the tag matches the firmware version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "v${{ steps.version.outputs.version }}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match FIRMWARE_VERSION ${{ steps.version.outputs.version }} in src/version.h"
+            exit 1
+          fi
+
+      - name: Name the UF2 files
+        run: |
+          mkdir dist
+          cp .pio/build/mk5/firmware.uf2 "dist/hddsynth-mk5-v${{ steps.version.outputs.version }}.uf2"
+          cp .pio/build/mk5_stream_test/firmware.uf2 "dist/hddsynth-mk5-v${{ steps.version.outputs.version }}-stream-test.uf2"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-v${{ steps.version.outputs.version }}
+          path: dist/*.uf2
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-v${{ needs.build.outputs.version }}
+          path: dist
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Only the normal build: the stream-test UF2 stays in the run's artifacts.
+          gh release create "${GITHUB_REF_NAME}" "dist/hddsynth-mk5-${GITHUB_REF_NAME}.uf2" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            $(case "${GITHUB_REF_NAME}" in v0.*) echo --prerelease;; esac)

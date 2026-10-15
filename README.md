@@ -43,7 +43,11 @@ switching, beeps, NVM persistence, jingle, OLED.
 
 ## Build and flash
 
-One-time setup: VS Code + the PlatformIO extension (or `pip install platformio`).
+**Ready-made UF2s:** every push is built by GitHub Actions (download the
+UF2 from the run's artifacts), and each `vX.Y.Z` tag publishes a release
+with `hddsynth-mk5-vX.Y.Z.uf2`.
+
+To build it yourself, one-time setup: VS Code + the PlatformIO extension (or `pip install platformio`).
 
 ```sh
 pio run                  # build -> .pio/build/mk5/firmware.uf2

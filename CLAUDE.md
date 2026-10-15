@@ -156,8 +156,10 @@ The first thing to confirm is that the build boots on the RP2354A.
 - [ ] Jingle on first boot; `RANDOM_SAMPLE_PACK`
 - [ ] OLED (I2C on GP24/25) when the hardware is fitted
 - [ ] Remove `WAIT_FOR_SERIAL_MS` for release builds
-- [ ] GitHub Actions: build the UF2 and run the native tests on every push;
-      attach the UF2 to tagged releases
+- [x] GitHub Actions (`.github/workflows/build.yml`): builds both envs and
+      runs the native tests against the sample packs on every push/PR; a
+      `vX.Y.Z` tag must match `FIRMWARE_VERSION` and publishes a release
+      with the UF2
 
 **Open questions:**
 - Exact supercap part, and spindown energy margin at high volume. Use the
