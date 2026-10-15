@@ -1,5 +1,5 @@
 // Host-side unit tests for the platform-independent firmware code:
-// WAV parsing, the power log sector format, the SPSC ring buffer and the mixer (including a two-thread
+// WAV parsing, the power log sector format, encoder decoding, the SPSC ring buffer and the mixer (including a two-thread
 // producer/consumer test that mirrors core 0 / core 1).
 //
 // Run: test/run_native_tests.sh [path/to/HDDSynth_Samples]
@@ -9,12 +9,14 @@
 #include <cstring>
 #include <dirent.h>
 #include <fstream>
+#include <initializer_list>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "mixer.h"
 #include "powerlog_format.h"
+#include "quadrature.h"
 #include "ring_buffer.h"
 #include "wav.h"
 
@@ -416,6 +418,49 @@ TEST(powerlog_sector_rejects_blank_and_torn) {
     CHECK_EQ(powerlog::decodeSector(sector, session, index, text), -1);
 }
 
+
+// ---- rotary encoder quadrature ----------------------------------------------
+
+// Feed a sequence of A/B states (bit 1 = A, bit 0 = B); return the detent sum.
+static int feed(QuadratureDecoder& d, std::initializer_list<uint8_t> states) {
+    int total = 0;
+    for (uint8_t ab : states) total += d.update(ab);
+    return total;
+}
+
+TEST(quadrature_one_detent_each_way) {
+    QuadratureDecoder d;
+    CHECK_EQ(feed(d, {0b01, 0b00, 0b10, 0b11}), 1);   // A leads
+    CHECK_EQ(feed(d, {0b10, 0b00, 0b01, 0b11}), -1);  // B leads
+    CHECK_EQ(feed(d, {0b01, 0b00, 0b10, 0b11, 0b01, 0b00, 0b10, 0b11, 0b01, 0b00, 0b10, 0b11}), 3);
+}
+
+TEST(quadrature_reports_only_at_rest) {
+    QuadratureDecoder d;
+    CHECK_EQ(d.update(0b01), 0);
+    CHECK_EQ(d.update(0b00), 0);
+    CHECK_EQ(d.update(0b10), 0);
+    CHECK_EQ(d.update(0b11), 1);
+}
+
+TEST(quadrature_contact_bounce_cancels) {
+    QuadratureDecoder d;
+    // Each edge chatters before settling; still exactly one detent.
+    CHECK_EQ(feed(d, {0b01, 0b11, 0b01, 0b00, 0b01, 0b00, 0b10, 0b00, 0b10, 0b11, 0b10, 0b11}), 1);
+    // Wiggling half-way into a detent and back is not a detent.
+    CHECK_EQ(feed(d, {0b01, 0b00, 0b01, 0b11}), 0);
+    CHECK_EQ(feed(d, {0b10, 0b11, 0b10, 0b11}), 0);
+}
+
+TEST(quadrature_missed_transition_still_counts) {
+    QuadratureDecoder d;
+    // A fast turn skips 00 (01 -> 10 changes both bits): 2 valid quarters.
+    CHECK_EQ(feed(d, {0b01, 0b10, 0b11}), 1);
+    CHECK_EQ(feed(d, {0b10, 0b01, 0b11}), -1);
+    // Repeated states (interrupt for an edge already seen) change nothing.
+    CHECK_EQ(feed(d, {0b11, 0b11, 0b01, 0b01, 0b00, 0b10, 0b10, 0b11}), 1);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -428,6 +473,10 @@ int main(int argc, char** argv) {
     RUN(powerlog_sector_round_trip);
     RUN(powerlog_sector_full_and_clamped);
     RUN(powerlog_sector_rejects_blank_and_torn);
+    RUN(quadrature_one_detent_each_way);
+    RUN(quadrature_reports_only_at_rest);
+    RUN(quadrature_contact_bounce_cancels);
+    RUN(quadrature_missed_transition_still_counts);
     RUN(ring_wraparound);
     RUN(ring_two_threads);
     RUN(mixer_unity_passthrough_and_end);

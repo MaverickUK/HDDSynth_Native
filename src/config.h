@@ -47,6 +47,12 @@ constexpr uint32_t POWER_LOSS_CONFIRM_MS = 3;     // FLT must stay low this long
 constexpr float    RESTORE_RISE_V       = 0.05f;
 constexpr uint32_t RESTORE_WINDOW_MS    = 1000;
 
+// ---- Controls ----
+constexpr int      VOLUME_STEP_PERCENT  = 5;     // per encoder detent (VOLUME_STEP 0.05 in settings.py)
+constexpr int      BALANCE_STEP_PERCENT = 10;    // per encoder detent (BALANCE_STEP 0.1)
+constexpr bool     ENCODER_REVERSED     = false; // flip if clockwise turns the volume down
+constexpr uint32_t BUTTON_DEBOUNCE_MS   = 20;
+
 // ---- Safety ----
 constexpr uint32_t WATCHDOG_MS        = 2000;
 constexpr uint32_t CORE1_STALL_MS     = 500;   // core1 heartbeat must advance within this

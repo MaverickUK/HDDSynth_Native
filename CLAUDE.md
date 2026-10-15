@@ -125,6 +125,7 @@ incompatible SD layout or settings.json changes) and tag that commit
   (`startStream`, `startMemory`, `stop`, `setLevel`).
 - `sd_streamer.*`: core 0 only. WAV parsing, ring refill, looping, retries,
   card re-init and file reopen.
+- `controls.*`: rotary encoder (pin interrupts on core 0) and its button.
 - `power.*`: FLT interrupt with 3 ms confirm, supercap ADC, restore detection.
 - `powerlog.*`: from power loss onwards, logs power lines to `/powerlog.bin`
   with raw sector writes so they survive the board dying; `l` prints them.
@@ -144,8 +145,9 @@ serial stats and stress test.
 The first thing to confirm is that the build boots on the RP2354A.
 
 **Still to port from the Python firmware:**
-- [ ] Rotary encoder: volume / balance, with button toggling the mode
-      (`rotary_enc.py`, `volume.py`, `balance.py`)
+- [x] Rotary encoder: volume / balance, with button toggling the mode
+      (`controls.*`, decoding in `quadrature.h`). Mode-change beeps are a
+      TODO until beeps are ported.
 - [ ] Action button: short press = next pack, long press = factory reset
       (`action_button.py`). Pack switching should hot-swap streams, with no
       reboot or caching needed.

@@ -14,6 +14,7 @@
 
 #include "audio_engine.h"
 #include "config.h"
+#include "controls.h"
 #include "io.h"
 #include "power.h"
 #include "powerlog.h"
@@ -296,10 +297,7 @@ void handleSerial() {
                 break;
             case '+':
             case '-':
-                settings.volume += (c == '+') ? 0.05f : -0.05f;
-                if (settings.volume < 0) settings.volume = 0;
-                if (settings.volume > 1) settings.volume = 1;
-                Serial.printf("[volume] %d%%\n", static_cast<int>(settings.volume * 100 + 0.5f));
+                controls::adjustVolume(c == '+' ? 1 : -1);
                 break;
             case 'n': {
                 const int next = sd::packIndex(pack) + 1;
@@ -350,6 +348,7 @@ void boot() {
         Serial.println("[settings] settings.json is not valid JSON, using defaults");
     }
     io::setSimulation(settings.simulationMode);
+    controls::begin(settings);
     printSettings(settings);
     power::begin(settings.powerDetection);
     powerlog::begin();
@@ -473,6 +472,7 @@ void loop() {
 
         case State::Spinup:
             sd::pump();
+            controls::poll();
             powerTrace("spinup");
             if (power::lost()) enterSpindown();
             else if (!audio::isPlaying(VOICE_SPINUP)) enterRun();
@@ -480,6 +480,7 @@ void loop() {
 
         case State::Run:
             sd::pump();
+            controls::poll();
             if (power::lost()) enterSpindown();
             else runStep();
             break;
