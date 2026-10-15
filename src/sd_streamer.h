@@ -46,8 +46,13 @@ void closeStream(Stream& s);
 // it would leave less than cfg::HEAP_RESERVE_BYTES free.
 bool loadToRam(const char* path, int16_t*& data, uint32_t& samples);
 
+// Packs are the directories in /samples, sorted case-insensitively.
 // Find a pack: `preferred` if it exists, else the first directory in /samples.
 bool choosePack(const char* preferred, char* out, size_t outLen);
+// Position of `name` in the sorted list, or -1.
+int packIndex(const char* name);
+// The pack at `index` (wrapping), and how many packs there are.
+bool packByIndex(int index, char* out, size_t outLen, int& count);
 
 bool readTextFile(const char* path, char* buf, size_t bufLen, size_t& outLen);
 

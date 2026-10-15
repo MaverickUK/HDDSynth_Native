@@ -303,6 +303,32 @@ bool loadToRam(const char* path, int16_t*& data, uint32_t& samples) {
     return true;
 }
 
+// The pack directories in /samples, in case-insensitive order, found by
+// rescanning rather than storing a list: it only runs at boot, and RAM is
+// better spent keeping big spindowns in memory.
+// Returns the name that sorts straight after `after` ("" = the first), or false.
+bool nextPackName(const char* after, char* out, size_t outLen) {
+    char prev[64];  // copy first: callers may pass the same buffer as after and out
+    strncpy(prev, after, sizeof(prev) - 1);
+    prev[sizeof(prev) - 1] = 0;
+    FsFile dir, entry;
+    if (!dir.open("/samples")) return false;
+    char name[64];
+    out[0] = 0;
+    while (entry.openNext(&dir, O_RDONLY)) {
+        if (entry.isDir()) {
+            entry.getName(name, sizeof(name));
+            if (name[0] != '.' && (!prev[0] || strcasecmp(name, prev) > 0) &&
+                (!out[0] || strcasecmp(name, out) < 0)) {
+                strncpy(out, name, outLen - 1);
+                out[outLen - 1] = 0;
+            }
+        }
+        entry.close();
+    }
+    return out[0] != 0;
+}
+
 bool choosePack(const char* preferred, char* out, size_t outLen) {
     char path[128];
     if (preferred && preferred[0]) {
@@ -314,21 +340,26 @@ bool choosePack(const char* preferred, char* out, size_t outLen) {
         }
         Serial.printf("[sd] pack '%s' not found, using first pack\n", preferred);
     }
-    FsFile dir, entry;
-    if (!dir.open("/samples")) return false;
-    char best[64] = {0};
-    char name[64];
-    while (entry.openNext(&dir, O_RDONLY)) {
-        if (entry.isDir()) {
-            entry.getName(name, sizeof(name));
-            if (name[0] != '.' && (!best[0] || strcasecmp(name, best) < 0)) {
-                strncpy(best, name, sizeof(best) - 1);
-            }
-        }
-        entry.close();
-    }
-    if (!best[0]) return false;
-    strncpy(out, best, outLen - 1);
+    return nextPackName("", out, outLen);
+}
+
+int packIndex(const char* name) {
+    char cur[64] = "";
+    for (int i = 0; nextPackName(cur, cur, sizeof(cur)); ++i)
+        if (strcasecmp(cur, name) == 0) return i;
+    return -1;
+}
+
+bool packByIndex(int index, char* out, size_t outLen, int& count) {
+    char cur[64] = "";
+    count = 0;
+    while (nextPackName(cur, cur, sizeof(cur))) ++count;
+    if (count == 0) return false;
+    index %= count;
+    if (index < 0) index += count;
+    cur[0] = 0;
+    for (int i = 0; i <= index; ++i) nextPackName(cur, cur, sizeof(cur));
+    strncpy(out, cur, outLen - 1);
     out[outLen - 1] = 0;
     return true;
 }

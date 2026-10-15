@@ -5,8 +5,9 @@
 //
 // Serial commands (115200, USB): h help, s stats, t stress test on/off,
 // p simulate power loss, a toggle simulated activity, + / - volume,
-// r reboot, b reboot to USB bootloader (for flashing).
+// n next sample pack (for testing), r reboot, b reboot to USB bootloader.
 #include <Arduino.h>
+#include <hardware/structs/watchdog.h>
 
 #include <initializer_list>
 
@@ -20,6 +21,12 @@
 
 #ifndef WAIT_FOR_SERIAL_MS
 #define WAIT_FOR_SERIAL_MS 0
+#endif
+
+// Test builds only (env:mk5_stream_test): never load spindown into RAM, so
+// the streamed spindown path runs with packs whose spindown would fit.
+#ifndef FORCE_STREAMED_SPINDOWN
+#define FORCE_STREAMED_SPINDOWN 0
 #endif
 
 // ---------------------------------------------------------------------------
@@ -49,6 +56,12 @@ const char* stateName(State s) {
 State state = State::Boot;
 Settings settings;
 char pack[64] = {0};
+
+// The serial 'n' command picks a pack by index and reboots. The index
+// survives the reboot in watchdog scratch registers, which keep their value
+// across resets until power is removed. scratch[0..3] are free for
+// applications; the SDK uses 4..7 for its own reboot handling.
+constexpr uint32_t PACK_OVERRIDE_MAGIC = 0x5041434B;  // "PACK"
 
 // One shared ring for the one-shot samples (spinup at boot, spindown if it
 // has to stream), plus one per looping voice.
@@ -246,7 +259,7 @@ void handleSerial() {
             case 'h':
                 Serial.println("firmware v" FIRMWARE_VERSION);
                 Serial.println("h help | s stats | t stress on/off | p simulate power loss | "
-                               "a toggle simulated activity | + / - volume | r reboot | b bootloader");
+                               "a toggle simulated activity | + / - volume | n next pack | r reboot | b bootloader");
                 break;
             case 's': printStats(); break;
             case 't':
@@ -275,6 +288,16 @@ void handleSerial() {
                 if (settings.volume > 1) settings.volume = 1;
                 Serial.printf("[volume] %d%%\n", static_cast<int>(settings.volume * 100 + 0.5f));
                 break;
+            case 'n': {
+                const int next = sd::packIndex(pack) + 1;
+                watchdog_hw->scratch[0] = PACK_OVERRIDE_MAGIC;
+                watchdog_hw->scratch[1] = static_cast<uint32_t>(next);
+                io::ampOff();
+                Serial.println("[pack] switching to the next pack, rebooting");
+                Serial.flush();
+                rp2040.reboot();
+                break;
+            }
             case 'r': rp2040.reboot(); break;
             case 'b': rp2040.rebootToBootloader(); break;
             default: break;
@@ -316,7 +339,14 @@ void boot() {
     printSettings(settings);
     power::begin(settings.powerDetection);
 
-    if (!sd::choosePack(settings.samplePack, pack, sizeof(pack))) {
+    bool havePack = false;
+    if (watchdog_hw->scratch[0] == PACK_OVERRIDE_MAGIC) {
+        int count = 0;
+        const int index = static_cast<int>(watchdog_hw->scratch[1]);
+        havePack = sd::packByIndex(index, pack, sizeof(pack), count);
+        if (havePack) Serial.printf("[boot] pack override %d of %d (serial 'n')\n", index % count + 1, count);
+    }
+    if (!havePack && !sd::choosePack(settings.samplePack, pack, sizeof(pack))) {
         halt("no sample packs in /samples");
         return;
     }
@@ -333,7 +363,8 @@ void boot() {
     }
 
     samplePath(p, sizeof(p), "spindown.wav");
-    if (sd::loadToRam(p, spindownRam, spindownSamples)) {
+    if (FORCE_STREAMED_SPINDOWN) Serial.println("[boot] test build: FORCE_STREAMED_SPINDOWN");
+    if (!FORCE_STREAMED_SPINDOWN && sd::loadToRam(p, spindownRam, spindownSamples)) {
         Serial.printf("[boot] spindown in RAM (%lu ms)\n", static_cast<unsigned long>(samplesToMs(spindownSamples)));
     } else {
         Serial.println("[boot] spindown will stream from SD");
