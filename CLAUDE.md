@@ -68,6 +68,22 @@ or file I/O, and never block core 1.
   - No series termination on the SD SPI lines.
   - TPS63020 PG and the SD card-detect pin aren't connected.
   - VSYS bulk capacitance is thin (about 74 µF nominal MLCC).
+  - **Supercap may not recharge from empty** (seen 2026-10-15, hardware
+    test 6, powered from a Mac's USB-C port). After one real power cut
+    drained it to about 1.1 V, it stayed at about 0 V for 6+ minutes on USB.
+    It should charge at about 0.17 V/s. Before that cut it held 4.1 V.
+    - The TPS61094 (EN and MODE pulled up to VSYS: auto buck/boost mode)
+      only charges when VIN is more than 0.1 V above its boost target
+      (OSEL 75 k = 4.2 V), so VIN_PROT must stay above about 4.3 V.
+    - The eFuse only trips below about 4.0 V, so the board can run on
+      4.0–4.3 V and never charge.
+    - Most likely cause: charging from empty draws an extra 250 mA, which
+      sags VIN_PROT below 4.3 V through the USB port, cable and eFuse.
+    - Not yet confirmed by measurement. Also possible: the TPS61094 won't
+      charge a supercap from near 0 V; its datasheet doesn't say.
+    - Options: a lower boost target (OSEL), a lower ICHG, more VIN
+      headroom, or VIN_PROT sensing so firmware can warn when the
+      backup isn't charging.
 
 ## Toolchain notes and gotchas
 
