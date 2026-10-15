@@ -159,12 +159,17 @@ The first thing to confirm is that the build boots on the RP2354A.
       (no buffer), `beeps.*` holds the profiles and drives the LED. Serial
       `k` auditions them. (Python's yellow "busy" flashing at boot and the
       RGB startup test are not ported.)
-- [ ] NVM persistence: desired pack and jingle flag are done (`persist.*`);
-      volume/balance with a debounce still to do (`persisted_float.py`,
-      off by default in Python). Flash writes pause core 1, so only write
-      with the audio stopped and the amp muted (e.g. on a pack change).
-- [ ] Jingle on first boot; `RANDOM_SAMPLE_PACK`
-- [ ] OLED (I2C on GP24/25) when the hardware is fitted
+- [x] NVM persistence: desired pack and jingle flag (`persist.*`). Flash
+      writes pause core 1, so only write with the audio stopped and the amp
+      muted (e.g. on a pack change).
+- **Decided against:** saving volume/balance (`persisted_float.py`, off by
+  default in Python). The write would happen while idle/access play, and
+  pausing core 1 risks an audible glitch (owner's decision, 2026-10-15).
+- [x] Jingle on first boot (`/jingle.wav`, full volume, `JINGLE` state before
+      spinup; `ALWAYS_PLAY_JINGLE` is a settings.json key here);
+      `RANDOM_SAMPLE_PACK` (avoids the previous pack, saves its choice).
+      RANDOM_SAMPLE_PACK is not yet tried on hardware.
+- [ ] OLED (I2C on GP24/25): parked until it is specified (owner, 2026-10-15)
 - [ ] Remove `WAIT_FOR_SERIAL_MS` for release builds
 - [x] GitHub Actions (`.github/workflows/build.yml`): builds both envs and
       runs the native tests against the sample packs on every push/PR; a

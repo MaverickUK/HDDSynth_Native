@@ -44,10 +44,11 @@ void loop1() { audio::core1Loop(); }
 // ---------------------------------------------------------------------------
 namespace {
 
-enum class State { Boot, Spinup, Run, Spindown, WaitPower, Halted };
+enum class State { Boot, Jingle, Spinup, Run, Spindown, WaitPower, Halted };
 const char* stateName(State s) {
     switch (s) {
         case State::Boot: return "BOOT";
+        case State::Jingle: return "JINGLE";
         case State::Spinup: return "SPINUP";
         case State::Run: return "RUN";
         case State::Spindown: return "SPINDOWN";
@@ -93,6 +94,8 @@ uint32_t maxLoopGapUs = 0;  // longest gap between loop() passes since power los
 void enterRun();
 void changePack();
 void factoryReset();
+bool startJingle();
+void startSpinup();
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -285,7 +288,7 @@ void handleSerial() {
             case 'h':
                 Serial.println("firmware v" FIRMWARE_VERSION);
                 Serial.println("h help | s stats | t stress on/off | p simulate power loss | "
-                               "a toggle simulated activity | + / - volume | n next pack | k beep test | l power log | r reboot | b bootloader");
+                               "a toggle simulated activity | + / - volume | n next pack | k beep test | l power log | d list SD root | r reboot | b bootloader");
                 break;
             case 's': printStats(); break;
             case 't':
@@ -326,6 +329,7 @@ void handleSerial() {
                 break;
             }
             case 'l': powerlog::printLast(); break;
+            case 'd': sd::listDir("/"); break;
             case 'r': rp2040.reboot(); break;
             case 'b': rp2040.rebootToBootloader(); break;
             default: break;
@@ -422,6 +426,26 @@ void factoryReset() {
     rp2040.reboot();
 }
 
+// RANDOM_SAMPLE_PACK: pick any pack except the one used last time (when
+// there is a choice), into `pack`, and remember it (random_pack()).
+// Called at boot before any audio, so the flash write is harmless.
+bool chooseRandomPack() {
+    int count = 0;
+    if (!sd::packByIndex(0, pack, sizeof(pack), count)) return false;
+    const int previous = sd::packIndex(persist::state().desiredPack);
+    int index = static_cast<int>(random(count));
+    if (count > 1 && previous >= 0) {
+        index = static_cast<int>(random(count - 1));  // uniform over the others
+        if (index >= previous) ++index;
+    }
+    sd::packByIndex(index, pack, sizeof(pack), count);
+    Serial.printf("[boot] random pack %d of %d: %s\n", index + 1, count, pack);
+    PersistedState& saved = persist::state();
+    strncpy(saved.desiredPack, pack, sizeof(saved.desiredPack) - 1);
+    persist::commit();
+    return true;
+}
+
 const char* resetReasonName() {
     switch (rp2040.getResetReason()) {
         case RP2040::PWRON_RESET: return "power on";
@@ -457,19 +481,23 @@ void boot() {
     powerlog::begin();
     persist::begin();
 
-    // Which pack: SAMPLE_PACK in settings.json wins (as in the CircuitPython
-    // firmware), then the one last chosen with the action button, then the
-    // first pack on the card.
-    const char* preferred = persist::state().desiredPack;
-    if (settings.samplePack[0]) {
-        if (sd::packExists(settings.samplePack)) preferred = settings.samplePack;
-        else {
-            Serial.printf("[boot] SAMPLE_PACK '%s' not found\n", settings.samplePack);
-            beepAndWait(beeps::Type::PackNotFound);  // a warning: carry on with another pack
-            io::ampOff();
+    // Which pack: RANDOM_SAMPLE_PACK, else SAMPLE_PACK in settings.json (as in
+    // the CircuitPython firmware), then the one last chosen with the action
+    // button, then the first pack on the card.
+    bool havePack = settings.randomSamplePack && chooseRandomPack();
+    if (!havePack) {
+        const char* preferred = persist::state().desiredPack;
+        if (settings.samplePack[0] && !settings.randomSamplePack) {
+            if (sd::packExists(settings.samplePack)) preferred = settings.samplePack;
+            else {
+                Serial.printf("[boot] SAMPLE_PACK '%s' not found\n", settings.samplePack);
+                beepAndWait(beeps::Type::PackNotFound);  // a warning: carry on with another pack
+                io::ampOff();
+            }
         }
+        havePack = sd::choosePack(preferred, pack, sizeof(pack));
     }
-    if (!sd::choosePack(preferred, pack, sizeof(pack))) {
+    if (!havePack) {
         halt("no sample packs in /samples", beeps::Type::NoPacksOnSdCard);
         return;
     }
@@ -481,12 +509,44 @@ void boot() {
     }
     Serial.printf("[boot] free heap %d\n", rp2040.getFreeHeap());
 
-    char p[128];
-
     rp2040.wdt_begin(cfg::WATCHDOG_MS);
     lastHeartbeatChangeMs = millis();
     io::ampOn();
 
+    if (startJingle()) state = State::Jingle;  // spinup follows it
+    else startSpinup();
+}
+
+// The jingle plays once, on the first boot (or after a factory reset), at
+// full volume before the spinup: _maybe_play_jingle() in the CircuitPython
+// firmware. It streams through the spinup voice and ring.
+bool startJingle() {
+    if (persist::state().jinglePlayed && !settings.alwaysPlayJingle) return false;
+    if (!sd::openStream(streamSpinup, "/jingle.wav", VOICE_SPINUP, &ringOneShot, false)) {
+        Serial.println("[boot] no /jingle.wav, skipping the jingle");
+        return false;
+    }
+    if (!sd::prime(streamSpinup) || !audio::startStream(VOICE_SPINUP, &ringOneShot, LEVEL_UNITY)) return false;
+    Serial.println("[boot] jingle");
+    return true;
+}
+
+void finishJingle() {
+    sd::closeStream(streamSpinup);
+    if (!persist::state().jinglePlayed) {
+        persist::state().jinglePlayed = true;
+        // Nothing is playing between the jingle and the spinup, so this is a
+        // safe moment for the flash write (it pauses core 1).
+        io::ampOff();
+        persist::commit();
+        lastHeartbeatChangeMs = millis();
+        io::ampOn();
+    }
+    startSpinup();
+}
+
+void startSpinup() {
+    char p[128];
     samplePath(p, sizeof(p), "spinup.wav");
     if (settings.playSpinup && sd::openStream(streamSpinup, p, VOICE_SPINUP, &ringOneShot, false) &&
         sd::prime(streamSpinup) &&
@@ -567,6 +627,14 @@ void loop() {
     switch (state) {
         case State::Boot:
             boot();
+            break;
+
+        case State::Jingle:
+            sd::pump();
+            controls::poll();  // volume changes apply from the spinup on; the jingle is pinned at full
+            beeps::service();
+            if (power::lost()) enterSpindown();
+            else if (!audio::isPlaying(VOICE_SPINUP)) finishJingle();
             break;
 
         case State::Spinup:

@@ -398,6 +398,22 @@ bool readSector(uint32_t sector, uint8_t* dst) { return mounted && card.card()->
 
 bool writeSector(uint32_t sector, const uint8_t* src) { return mounted && card.card()->writeSector(sector, src); }
 
+void listDir(const char* path) {
+    FsFile dir, entry;
+    if (!mounted || !dir.open(path)) {
+        Serial.printf("[sd] cannot open %s\n", path);
+        return;
+    }
+    Serial.printf("[sd] %s:\n", path);
+    char name[96];
+    while (entry.openNext(&dir, O_RDONLY)) {
+        entry.getName(name, sizeof(name));
+        if (entry.isDir()) Serial.printf("  %s/\n", name);
+        else Serial.printf("  %s  (%lu bytes)\n", name, static_cast<unsigned long>(entry.fileSize()));
+        entry.close();
+    }
+}
+
 bool readTextFile(const char* path, char* buf, size_t bufLen, size_t& outLen) {
     outLen = 0;
     FsFile f;

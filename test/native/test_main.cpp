@@ -147,29 +147,32 @@ TEST(wav_real_sample_packs) {
         return;
     }
     int files = 0;
+    // Skips a file that doesn't exist; one that exists must be playable.
+    auto checkWav = [&](const std::string& p) {
+        std::ifstream f(p, std::ios::binary | std::ios::ate);
+        if (!f) return;
+        const uint32_t size = static_cast<uint32_t>(f.tellg());
+        f.seekg(0);
+        std::vector<uint8_t> head(1024);
+        f.read(reinterpret_cast<char*>(head.data()), head.size());
+        WavInfo info;
+        const WavError e = parseWavHeader(head.data(), static_cast<size_t>(f.gcount()), size, info);
+        const bool ok = e == WavError::Ok && wavIsPlayable(info, 16000) && info.dataOffset + info.dataBytes <= size;
+        if (!ok) std::printf("  FAIL %s: %s\n", p.c_str(), wavErrorName(e));
+        CHECK(ok);
+        ++files;
+    };
     DIR* root = opendir(samplesDir.c_str());
     CHECK(root != nullptr);
     if (!root) return;
     while (dirent* pack = readdir(root)) {
         if (pack->d_name[0] == '.') continue;
         for (const char* name : {"spinup.wav", "idle.wav", "access.wav", "spindown.wav"}) {
-            std::string p = samplesDir + "/" + pack->d_name + "/" + name;
-            std::ifstream f(p, std::ios::binary | std::ios::ate);
-            if (!f) continue;
-            const uint32_t size = static_cast<uint32_t>(f.tellg());
-            f.seekg(0);
-            std::vector<uint8_t> head(1024);
-            f.read(reinterpret_cast<char*>(head.data()), head.size());
-            WavInfo info;
-            const WavError e = parseWavHeader(head.data(), static_cast<size_t>(f.gcount()), size, info);
-            const bool ok = e == WavError::Ok && wavIsPlayable(info, 16000) &&
-                            info.dataOffset + info.dataBytes <= size;
-            if (!ok) std::printf("  FAIL %s: %s\n", p.c_str(), wavErrorName(e));
-            CHECK(ok);
-            ++files;
+            checkWav(samplesDir + "/" + pack->d_name + "/" + name);
         }
     }
     closedir(root);
+    checkWav(samplesDir + "/jingle.wav");  // played from the SD card root on first boot
     std::printf("  %d sample files parsed\n", files);
     CHECK(files > 0);
 }
