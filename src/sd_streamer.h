@@ -1,6 +1,8 @@
 // SD card access. Runs on core 0 only; it is the single owner of the card.
-// Streams WAV sample data into each voice's ring buffer and recovers from
-// read errors by re-initialising the card and reopening files in place.
+// Streams WAV sample data into each voice's ring buffer. If reads keep
+// failing the card is marked down; pump() then looks for it every
+// SD_REMOUNT_INTERVAL_MS without blocking, re-initialises it and reopens the
+// files in place, so playback resumes where it left off.
 #pragma once
 
 #include <stdint.h>
@@ -24,13 +26,13 @@ struct Stream {
 struct Stats {
     uint32_t chunksRead = 0;
     uint32_t readErrors = 0;     // failed reads (each retry counts)
-    uint32_t recoveries = 0;     // card re-initialisations
-    uint32_t failedRecoveries = 0;
+    uint32_t recoveries = 0;     // card remounted after being down
+    uint32_t failedRecoveries = 0;  // a card answered but would not mount
     uint32_t maxReadMicros = 0;  // worst single chunk read since last reset
 };
 
 bool begin();                       // init SPI1 + card + filesystem
-bool cardOk();
+bool cardOk();                      // false while the card is down
 
 // Open a WAV for streaming into `ring` for `voice`. Validates the format.
 bool openStream(Stream& s, const char* path, VoiceId voice, SampleRing* ring, bool loop);

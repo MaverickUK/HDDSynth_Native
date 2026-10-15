@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <SdFat.h>
+#include <hardware/gpio.h>
 
 #include "config.h"
 
@@ -11,7 +12,9 @@ namespace sd {
 namespace {
 
 SdFs card;
-bool mounted = false;
+bool mounted = false;      // false after a failed read: the card is "down" until a remount works
+uint32_t downSinceMs = 0;
+uint32_t nextRemountMs = 0;
 Stats st;
 
 // Streams that are open, so recovery can reopen them. Small fixed table.
@@ -41,10 +44,17 @@ SdSpiConfig spiConfig() {
     return SdSpiConfig(cfg::PIN_SD_CS, DEDICATED_SPI, cfg::SD_SPI_HZ, &SPI1);
 }
 
-bool mount() {
+void setSpiPins() {
     SPI1.setRX(cfg::PIN_SD_MISO);
     SPI1.setSCK(cfg::PIN_SD_SCK);
     SPI1.setTX(cfg::PIN_SD_MOSI);
+    // With no card in the slot MISO floats. The pull-up makes it read 0xFF
+    // (no response), which is also what the SD spec recommends.
+    gpio_pull_up(cfg::PIN_SD_MISO);
+}
+
+bool mount() {
+    setSpiPins();
     mounted = card.begin(spiConfig());
     if (!mounted) {
         Serial.printf("[sd] mount failed: error 0x%02X data 0x%02X\n",
@@ -71,26 +81,67 @@ bool reopenAll() {
     return true;
 }
 
-bool recover() {
-    Serial.println("[sd] recovering card");
-    for (int i = 0; i < MAX_STREAMS; ++i) files[i].close();
-    card.end();
-    delay(5);
-    if (mount() && reopenAll()) {
-        st.recoveries++;
-        return true;
-    }
-    st.failedRecoveries++;
-    return false;
+// Quick check for a card: send CMD0 (GO_IDLE_STATE) and look for the 0x01
+// reply. Takes well under 1 ms with or without a card. card.begin() instead
+// waits up to 2 s for an absent card, longer than the watchdog allows, and
+// power-loss detection would be blind for that time.
+bool cardResponds() {
+    setSpiPins();
+    pinMode(cfg::PIN_SD_CS, OUTPUT);
+    digitalWrite(cfg::PIN_SD_CS, HIGH);
+    SPI1.begin();
+    SPI1.beginTransaction(SPISettings(cfg::SD_PROBE_HZ, MSBFIRST, SPI_MODE0));
+    for (int i = 0; i < 10; ++i) SPI1.transfer(0xFF);  // 80 clocks with CS high: wake up
+    digitalWrite(cfg::PIN_SD_CS, LOW);
+    const uint8_t cmd0[] = {0x40, 0x00, 0x00, 0x00, 0x00, 0x95};
+    for (uint8_t b : cmd0) SPI1.transfer(b);
+    uint8_t r1 = 0xFF;
+    for (int i = 0; i < 16 && r1 == 0xFF; ++i) r1 = SPI1.transfer(0xFF);
+    digitalWrite(cfg::PIN_SD_CS, HIGH);
+    SPI1.transfer(0xFF);
+    SPI1.endTransaction();
+    SPI1.end();
+    return r1 == 0x01;
 }
 
-// Read up to `bytes` of sample data. Retries, then recovers the card once.
+// After repeated read failures: close everything and mark the card down.
+// pump() then looks for it every SD_REMOUNT_INTERVAL_MS without blocking, so
+// the main loop keeps checking for power loss and feeding the watchdog.
+void markDown() {
+    for (int i = 0; i < MAX_STREAMS; ++i) files[i].close();
+    card.end();
+    mounted = false;
+    downSinceMs = millis();
+    nextRemountMs = downSinceMs;  // the first look is immediate
+    Serial.println("[sd] card down, playing from buffers");
+}
+
+void tryRemount() {
+    const uint32_t now = millis();
+    if (static_cast<int32_t>(now - nextRemountMs) < 0) return;
+    nextRemountMs = now + cfg::SD_REMOUNT_INTERVAL_MS;
+    if (!cardResponds()) return;  // still absent: try again later
+    if (mount() && reopenAll()) {
+        st.recoveries++;
+        Serial.printf("[sd] card back after %lu ms\n", static_cast<unsigned long>(millis() - downSinceMs));
+        return;
+    }
+    // A card answered but would not mount or reopen. Leave it down and retry.
+    st.failedRecoveries++;
+    for (int i = 0; i < MAX_STREAMS; ++i) files[i].close();
+    card.end();
+    mounted = false;
+}
+
+// Read up to `bytes` of sample data, retrying a few times. If every attempt
+// fails the card is marked down; pump() takes care of bringing it back.
 int readData(Stream& s, int slot, uint8_t* dst, uint32_t bytes) {
-    for (int attempt = 0; attempt <= cfg::SD_READ_RETRIES; ++attempt) {
-        if (attempt == cfg::SD_READ_RETRIES) {
-            if (!recover()) return -1;
-        } else if (attempt > 0) {
-            if (!seekTo(s, files[slot])) continue;
+    if (!mounted) return -1;
+    const uint32_t firstTry = millis();
+    for (int attempt = 0; attempt < cfg::SD_READ_RETRIES; ++attempt) {
+        if (attempt > 0 && !seekTo(s, files[slot])) {
+            st.readErrors++;
+            continue;
         }
         const uint32_t t0 = micros();
         const int n = files[slot].read(dst, bytes);
@@ -104,6 +155,8 @@ int readData(Stream& s, int slot, uint8_t* dst, uint32_t bytes) {
         Serial.printf("[sd] read error on %s at %lu (got %d), attempt %d\n", s.path,
                       static_cast<unsigned long>(s.pos), n, attempt + 1);
     }
+    Serial.printf("[sd] giving up on reads after %lu ms\n", static_cast<unsigned long>(millis() - firstTry));
+    markDown();
     return -1;
 }
 
@@ -145,6 +198,7 @@ Stats& stats() { return st; }
 
 bool openStream(Stream& s, const char* path, VoiceId voice, SampleRing* ring, bool loop) {
     closeStream(s);
+    if (!mounted) return false;
     const int slot = claimSlot(s);
     if (slot < 0) return false;
 
@@ -176,7 +230,7 @@ bool openStream(Stream& s, const char* path, VoiceId voice, SampleRing* ring, bo
 
 bool prime(Stream& s) {
     const int slot = slotOf(s);
-    if (slot < 0 || !s.open || !audio::isIdle(s.voice)) return false;
+    if (!mounted || slot < 0 || !s.open || !audio::isIdle(s.voice)) return false;
 
     s.ring->reset();
     audio::voice(s.voice).eof.store(false, std::memory_order_relaxed);
@@ -197,6 +251,10 @@ void pump() {
     // A few chunks per stream per call keeps loop() responsive; at 2 KB per
     // chunk that is far more than the 32 KB/s each voice consumes.
     constexpr int CHUNKS_PER_CALL = 4;
+    if (!mounted) {
+        tryRemount();
+        if (!mounted) return;
+    }
     for (int i = 0; i < MAX_STREAMS; ++i) {
         Stream* s = registry[i];
         if (!s || !s->open || !s->feeding) continue;

@@ -62,6 +62,19 @@ serial command `b` also does it.
 **Back to CircuitPython:** same BOOT/RESET dance, then drag the CircuitPython
 UF2 back on. Your CIRCUITPY files are untouched by this firmware.
 
+### Versioning
+
+The firmware follows [Semantic Versioning](https://semver.org). The version
+lives in `src/version.h`, is printed at boot and by the `h` command, and each
+release commit is tagged `vX.Y.Z`.
+
+- **MAJOR:** incompatible changes to the SD card layout or `settings.json`.
+- **MINOR:** new features that stay backwards compatible.
+- **PATCH:** bug fixes only.
+
+While the version is `0.y.z` (proof of concept), anything may change between
+minor versions.
+
 ### Unit tests (run on your Mac, no hardware)
 
 ```sh

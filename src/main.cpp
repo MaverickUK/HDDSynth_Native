@@ -16,6 +16,7 @@
 #include "power.h"
 #include "sd_streamer.h"
 #include "settings.h"
+#include "version.h"
 
 #ifndef WAIT_FOR_SERIAL_MS
 #define WAIT_FOR_SERIAL_MS 0
@@ -243,6 +244,7 @@ void handleSerial() {
         const char c = Serial.read();
         switch (c) {
             case 'h':
+                Serial.println("firmware v" FIRMWARE_VERSION);
                 Serial.println("h help | s stats | t stress on/off | p simulate power loss | "
                                "a toggle simulated activity | + / - volume | r reboot | b bootloader");
                 break;
@@ -282,8 +284,22 @@ void handleSerial() {
 
 // ---- states ------------------------------------------------------------------
 
+const char* resetReasonName() {
+    switch (rp2040.getResetReason()) {
+        case RP2040::PWRON_RESET: return "power on";
+        case RP2040::RUN_PIN_RESET: return "reset button";
+        case RP2040::SOFT_RESET: return "software";
+        case RP2040::WDT_RESET: return "WATCHDOG";
+        case RP2040::DEBUG_RESET: return "debugger";
+        case RP2040::GLITCH_RESET: return "POWER GLITCH";
+        case RP2040::BROWNOUT_RESET: return "BROWNOUT";
+        default: return "unknown";
+    }
+}
+
 void boot() {
-    Serial.println("\n[boot] HDD Synth MK5 C++ firmware (proof of concept)");
+    Serial.println("\n[boot] HDD Synth MK5 C++ firmware v" FIRMWARE_VERSION " (proof of concept)");
+    Serial.printf("[boot] reset reason: %s\n", resetReasonName());
     io::begin(settings);  // amp off, LEDs off before anything else
 
     if (!sd::begin()) {

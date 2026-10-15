@@ -37,6 +37,8 @@ constexpr size_t   SD_CHUNK_SAMPLES = 1024;  // 2 KB per SD read
 // ---- SD ----
 constexpr uint32_t SD_SPI_HZ        = 25000000;
 constexpr int      SD_READ_RETRIES  = 3;
+constexpr uint32_t SD_REMOUNT_INTERVAL_MS = 500;    // while the card is down, look for it this often
+constexpr uint32_t SD_PROBE_HZ      = 400000;       // card init speed, used for the presence probe
 
 // ---- Power ----
 constexpr float    SUPERCAP_DIVIDER     = 0.5f;   // R24/R25 22k/22k
