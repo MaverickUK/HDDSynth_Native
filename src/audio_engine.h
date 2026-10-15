@@ -1,0 +1,42 @@
+// Audio engine: runs the mixer on core 1 and feeds I2S. Core 0 controls it
+// through the functions below. None of them touch the SD card.
+#pragma once
+
+#include <stdint.h>
+
+#include "mixer.h"
+
+enum VoiceId : uint8_t {
+    VOICE_SPINUP = 0,   // stream (boot only)
+    VOICE_IDLE,         // stream, looping
+    VOICE_ACCESS,       // stream, looping
+    VOICE_SPINDOWN,     // memory if it fits in RAM, otherwise stream
+    VOICE_BEEP,         // memory
+    VOICE_COUNT
+};
+
+namespace audio {
+
+// Core 1 entry points (called from setup1()/loop1()).
+void core1Setup();
+void core1Loop();
+
+// ---- Core 0 control ----
+// Start a voice reading from RAM. Stops the voice first if needed.
+bool startMemory(VoiceId id, const int16_t* data, uint32_t samples, bool loop, uint16_t level);
+// Start a voice reading from a ring the caller has already primed.
+bool startStream(VoiceId id, SampleRing* ring, uint16_t level);
+// Ask core 1 to stop a voice and wait (bounded) until it has. Returns false on timeout.
+bool stop(VoiceId id);
+bool isPlaying(VoiceId id);
+bool isIdle(VoiceId id);
+void setLevel(VoiceId id, uint16_t level);
+void markEndOfStream(VoiceId id);
+Voice& voice(VoiceId id);
+
+// ---- Health ----
+uint32_t heartbeat();          // increments once per mixed block
+uint32_t maxMixMicros();       // worst block mix time since last call (resets)
+bool i2sUnderflowed();         // I2S ran dry since last call (resets)
+
+} // namespace audio
