@@ -156,6 +156,11 @@ The first thing to confirm is that the build boots on the RP2354A.
   (`DEMO_SPINDOWN` state) and a random hue for the activity LED. Forces
   simulated activity. Never writes flash (a write per minute would wear the
   sector out). Serial `m` toggles it for testing.
+- Jingle light show: while the jingle plays, the RGB LED cycles the rainbow
+  (`cfg::JINGLE_RAINBOW_MS`) and its brightness follows the loudness. Core 1
+  publishes each mixed block's peak (`audio::outputPeak()`); core 0 smooths
+  it with `LevelFollower` (fast attack, slow release, auto-gain; host-tested).
+  Serial `j` replays the jingle (clears its flag and reboots).
 
 **Still to port from the Python firmware:**
 - [x] Rotary encoder: volume / balance, with button toggling the mode

@@ -22,6 +22,7 @@
 #include "button.h"
 #include "colour.h"
 #include "crc32.h"
+#include "level_follower.h"
 #include "persist_format.h"
 #include "powerlog_format.h"
 #include "quadrature.h"
@@ -672,6 +673,38 @@ TEST(hue_gives_vivid_colours) {
     CHECK(vivid);
 }
 
+
+// ---- LED level follower -------------------------------------------------------
+
+static float feedFor(LevelFollower& f, uint16_t peak, int ms) {
+    float b = 0;
+    for (int t = 0; t < ms; t += 10) b = f.update(peak, 10);
+    return b;
+}
+
+TEST(level_follower_silence_is_floor) {
+    LevelFollower f(15, 180, 3000, 0.05f);
+    CHECK(std::fabs(feedFor(f, 0, 500) - 0.05f) < 1e-4f);
+    CHECK(std::fabs(feedFor(f, 50, 500) - 0.05f) < 1e-4f);  // below -50 dBFS: not amplified
+}
+
+TEST(level_follower_fast_attack_slow_release) {
+    LevelFollower f(15, 180, 3000, 0.05f);
+    CHECK(feedFor(f, 20000, 40) > 0.9f);   // a beat lights it up within 40 ms
+    const float after50 = feedFor(f, 0, 50);
+    CHECK(after50 > 0.3f);                 // ...and fades rather than snapping off
+    CHECK(feedFor(f, 0, 1000) < 0.1f);     // back near the floor after a second
+}
+
+TEST(level_follower_auto_gain_lifts_quiet_audio) {
+    LevelFollower f(15, 180, 3000, 0.05f);
+    // A quiet recording (peaks ~ -20 dBFS) still reaches full brightness.
+    CHECK(feedFor(f, 3000, 500) > 0.95f);
+    // Half that level, shortly after, is clearly dimmer: contrast is kept.
+    const float half = feedFor(f, 1500, 300);
+    CHECK(half > 0.15f && half < 0.5f);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -702,6 +735,9 @@ int main(int argc, char** argv) {
     RUN(beep_triangle_shape);
     RUN(mixer_plays_a_beep_then_goes_idle);
     RUN(hue_gives_vivid_colours);
+    RUN(level_follower_silence_is_floor);
+    RUN(level_follower_fast_attack_slow_release);
+    RUN(level_follower_auto_gain_lifts_quiet_audio);
     RUN(ring_wraparound);
     RUN(ring_two_threads);
     RUN(mixer_unity_passthrough_and_end);

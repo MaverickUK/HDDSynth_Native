@@ -38,6 +38,7 @@ Voice& voice(VoiceId id);
 
 // ---- Health ----
 uint32_t heartbeat();          // increments once per mixed block
+uint16_t outputPeak();         // peak |sample| (0..32767) of the latest mixed block
 uint32_t maxMixMicros();       // worst block mix time since last call (resets)
 bool i2sUnderflowed();         // I2S ran dry since last call (resets)
 

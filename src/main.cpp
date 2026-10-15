@@ -17,6 +17,7 @@
 #include "config.h"
 #include "controls.h"
 #include "io.h"
+#include "level_follower.h"
 #include "persist.h"
 #include "power.h"
 #include "powerlog.h"
@@ -294,7 +295,7 @@ void handleSerial() {
             case 'h':
                 Serial.println("firmware v" FIRMWARE_VERSION);
                 Serial.println("h help | s stats | t stress on/off | p simulate power loss | "
-                               "a toggle simulated activity | + / - volume | n next pack | k beep test | l power log | d list SD root | m demo mode | r reboot | b bootloader");
+                               "a toggle simulated activity | + / - volume | n next pack | k beep test | l power log | d list SD root | m demo mode | j replay jingle | r reboot | b bootloader");
                 break;
             case 's': printStats(); break;
             case 't':
@@ -336,6 +337,15 @@ void handleSerial() {
             }
             case 'l': powerlog::printLast(); break;
             case 'd': sd::listDir("/"); break;
+            case 'j':  // replay the jingle: clear its flag and reboot
+                for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SPINDOWN}) audio::stop(id);
+                io::ampOff();  // audio stopped: safe to write flash
+                persist::state().jinglePlayed = false;
+                persist::commit();
+                Serial.println("[boot] jingle flag cleared, rebooting");
+                Serial.flush();
+                rp2040.reboot();
+                break;
             case 'm':  // demo mode on/off without editing settings.json (not saved)
                 settings.demoMode = !settings.demoMode;
                 if (settings.demoMode) {
@@ -570,6 +580,24 @@ void boot() {
     else startSpinup();
 }
 
+// While the jingle plays, the RGB LED cycles through the rainbow and pulses
+// with the loudness of the audio (core 1 reports each block's peak).
+LevelFollower jingleLevel(/*attackMs*/ 15, /*releaseMs*/ 180, /*gainDecayMs*/ 3000, /*floor*/ 0.05f);
+uint32_t jingleStartMs = 0;
+uint32_t jingleNextLightMs = 0;
+
+void jingleLights() {
+    if (beeps::active()) return;  // an encoder beep owns the LED for a moment
+    const uint32_t now = millis();
+    if (static_cast<int32_t>(now - jingleNextLightMs) < 0) return;
+    jingleNextLightMs = now + cfg::JINGLE_LIGHT_STEP_MS;
+    const float brightness = jingleLevel.update(audio::outputPeak(), cfg::JINGLE_LIGHT_STEP_MS);
+    uint8_t r, g, b;
+    hueToRgb(static_cast<uint16_t>((now - jingleStartMs) % cfg::JINGLE_RAINBOW_MS * 360 / cfg::JINGLE_RAINBOW_MS), r, g, b);
+    io::rgb(static_cast<uint8_t>(r * brightness), static_cast<uint8_t>(g * brightness),
+            static_cast<uint8_t>(b * brightness));
+}
+
 // The jingle plays once, on the first boot (or after a factory reset), at
 // full volume before the spinup: _maybe_play_jingle() in the CircuitPython
 // firmware. It streams through the spinup voice and ring.
@@ -581,10 +609,13 @@ bool startJingle() {
     }
     if (!sd::prime(streamSpinup) || !audio::startStream(VOICE_SPINUP, &ringOneShot, LEVEL_UNITY)) return false;
     Serial.println("[boot] jingle");
+    jingleLevel.reset();
+    jingleStartMs = jingleNextLightMs = millis();
     return true;
 }
 
 void finishJingle() {
+    io::rgbOff();
     sd::closeStream(streamSpinup);
     if (!persist::state().jinglePlayed) {
         persist::state().jinglePlayed = true;
@@ -689,6 +720,7 @@ void loop() {
             sd::pump();
             controls::poll();  // volume changes apply from the spinup on; the jingle is pinned at full
             beeps::service();
+            jingleLights();
             if (power::lost()) enterSpindown();
             else if (!audio::isPlaying(VOICE_SPINUP)) finishJingle();
             break;

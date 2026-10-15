@@ -13,6 +13,7 @@ Voice voices[VOICE_COUNT];
 std::atomic<uint32_t> heartbeatCount{0};
 std::atomic<uint32_t> worstMixUs{0};
 std::atomic<bool> underflowLatched{false};
+std::atomic<uint16_t> lastBlockPeak{0};
 
 constexpr uint32_t STOP_TIMEOUT_MS = 100;  // core 1 acks within one 8 ms block
 
@@ -43,12 +44,16 @@ void core1Loop() {
 
     const uint32_t t0 = micros();
     mixBlock(voices, VOICE_COUNT, mono, cfg::MIX_BLOCK_FRAMES);
+    int32_t peak = 0;
     for (size_t n = 0; n < cfg::MIX_BLOCK_FRAMES; ++n) {
         // MAX98357A plays the left channel (SD_MODE driven high); send the
         // same sample on both so any SD_MODE setting works.
         const uint16_t s = static_cast<uint16_t>(mono[n]);
         stereo[n] = (uint32_t(s) << 16) | s;
+        const int32_t a = mono[n] < 0 ? -int32_t(mono[n]) : mono[n];
+        if (a > peak) peak = a;
     }
+    lastBlockPeak.store(static_cast<uint16_t>(peak > 32767 ? 32767 : peak), std::memory_order_relaxed);
     const uint32_t dt = micros() - t0;
     if (dt > worstMixUs.load(std::memory_order_relaxed)) worstMixUs.store(dt, std::memory_order_relaxed);
 
@@ -131,6 +136,7 @@ void markEndOfStream(VoiceId id) {
 }
 
 uint32_t heartbeat() { return heartbeatCount.load(std::memory_order_relaxed); }
+uint16_t outputPeak() { return lastBlockPeak.load(std::memory_order_relaxed); }
 
 uint32_t maxMixMicros() { return worstMixUs.exchange(0, std::memory_order_relaxed); }
 
