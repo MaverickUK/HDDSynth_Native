@@ -18,6 +18,7 @@ bool ready = false;    // file reserved, sectors known
 bool logging = false;  // a session is running
 bool dirty = false;    // the current sector has text not yet on the card
 bool full = false;     // out of sectors: further lines go to Serial only
+bool serialOn = true;  // false after a real power loss (see start())
 uint32_t firstSector = 0;
 uint32_t sectorCount = 0;
 uint32_t lastSession = 0;  // session found on the card at boot (0 = none)
@@ -89,7 +90,8 @@ bool begin() {
     return true;
 }
 
-void start(const char* reason) {
+void start(const char* reason, bool serialToo) {
+    serialOn = serialToo;
     if (!ready) return;
     session = lastSession + 1;
     lastSession = session;
@@ -112,7 +114,7 @@ void logf(const char* fmt, ...) {
     if (n > static_cast<int>(sizeof(line)) - 2) n = sizeof(line) - 2;
     line[n++] = '\n';
     line[n] = 0;
-    Serial.print(line);
+    if (serialOn) Serial.print(line);
     append(line, static_cast<size_t>(n));
 }
 

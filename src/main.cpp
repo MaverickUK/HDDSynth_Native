@@ -414,7 +414,8 @@ void enterRun() {
 }
 
 void enterSpindown() {
-    powerlog::start(power::simulated() ? "simulated (serial p)" : "FLT low");
+    const bool simulated = power::simulated();
+    powerlog::start(simulated ? "simulated (serial p)" : "FLT low", simulated);
     powerlog::logf("[power] loss detected, firmware v" FIRMWARE_VERSION ", pack %s, supercap %d mV", pack,
                    power::supercapMillivolts());
     maxLoopGapUs = 0;

@@ -17,10 +17,13 @@ namespace powerlog {
 bool begin();
 
 // Power loss detected: start a new session (overwrites the previous one).
-void start(const char* reason);
+// Pass serialToo = false for a real power loss: the USB host has lost power
+// as well, and writing to a vanished host stalls core 0 for up to 1 s
+// (Arduino-Pico's SerialUSB write timeout), measured in hardware test 6.
+void start(const char* reason, bool serialToo);
 
-// Print a line to Serial and, while a session is running, append it to the
-// log. A newline is added.
+// Print a line to Serial (unless muted by start()) and, while a session is
+// running, append it to the log. A newline is added.
 void logf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 
 // Call from loop(): writes the current sector if it changed and FLUSH_MS has
