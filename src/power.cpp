@@ -13,7 +13,7 @@ bool enabled = true;
 std::atomic<bool> fltFell{false};
 std::atomic<uint32_t> fltFellAtMs{0};
 bool lostLatched = false;
-bool simulated = false;
+bool simulatedLoss = false;
 
 void onFltFalling() {
     // Interrupt context: just timestamp it; confirmation happens in lost().
@@ -27,6 +27,7 @@ void begin(bool detectionEnabled) {
     enabled = detectionEnabled;
     pinMode(cfg::PIN_POWER_FLT, INPUT);  // external 10k pull-up (R35)
     analogReadResolution(12);
+    analogRead(cfg::PIN_SUPERCAP_ADC);  // the first reading after configuring the pin is low; discard it
     if (enabled) attachInterrupt(digitalPinToInterrupt(cfg::PIN_POWER_FLT), onFltFalling, FALLING);
 }
 
@@ -34,7 +35,7 @@ bool fltHigh() { return digitalRead(cfg::PIN_POWER_FLT) == HIGH; }
 
 bool lost() {
     if (lostLatched) return true;
-    if (simulated) return lostLatched = true;
+    if (simulatedLoss) return lostLatched = true;
     if (!enabled) return false;
 
     if (fltHigh()) {
@@ -50,7 +51,8 @@ bool lost() {
     return lostLatched;
 }
 
-void simulateLoss() { simulated = true; }
+void simulateLoss() { simulatedLoss = true; }
+bool simulated() { return simulatedLoss; }
 
 int supercapMillivolts() { return static_cast<int>(supercapVolts() * 1000.0f + 0.5f); }
 
@@ -62,7 +64,7 @@ float supercapVolts() {
 }
 
 void waitForRestore(void (*idle)()) {
-    if (!enabled || simulated) {
+    if (!enabled || simulatedLoss) {
         // Nothing real to wait for: give the user a moment to read the log.
         for (int i = 0; i < 30; ++i) {
             idle();

@@ -96,6 +96,7 @@ p  simulate power loss (runs the spindown path)
 a  toggle simulated HDD activity
 +  / -  volume
 n  next sample pack (reboots; kept until power is removed)
+l  print the log of the last power loss (kept on the SD card)
 r  reboot
 b  reboot into the USB bootloader
 ```
@@ -139,6 +140,14 @@ Run these in order and send me the serial log from each.
    Every cut should produce a spindown. The `[trace]` lines give the
    supercap curve during spinup and spindown, which is the data for the
    earlier hardware questions.
+
+   A real cut takes USB down with it, so the console can't see it. From the
+   moment power loss is detected, the power lines and traces are also
+   written to `/powerlog.bin` on the SD card (raw sector writes into a
+   preallocated file, flushed every 250 ms). After power returns, send `l`
+   to print that session: spindown at 100 ms resolution, then the
+   supercap every 500 ms until power returns or the board dies. Only the
+   latest power loss is kept.
 7. **Each sample pack**, especially `PB_MicroScience612`. Its 345 KB
    spindown may not fit in RAM: check whether the log says "spindown in RAM"
    or "will stream from SD", and that both work.

@@ -5,7 +5,8 @@
 //
 // Serial commands (115200, USB): h help, s stats, t stress test on/off,
 // p simulate power loss, a toggle simulated activity, + / - volume,
-// n next sample pack (for testing), r reboot, b reboot to USB bootloader.
+// n next sample pack (for testing), l print the last power-loss log,
+// r reboot, b reboot to USB bootloader.
 #include <Arduino.h>
 #include <hardware/structs/watchdog.h>
 
@@ -15,6 +16,7 @@
 #include "config.h"
 #include "io.h"
 #include "power.h"
+#include "powerlog.h"
 #include "sd_streamer.h"
 #include "settings.h"
 #include "version.h"
@@ -88,6 +90,8 @@ bool core1Stalled = false;
 
 uint32_t nextStatsMs = 0;
 uint32_t nextPowerTraceMs = 0;
+uint32_t lastLoopStartUs = 0;
+uint32_t maxLoopGapUs = 0;  // longest gap between loop() passes since power loss
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -124,12 +128,21 @@ void halt(const char* why) {
     state = State::Halted;
 }
 
-void powerTrace(const char* tag) {
+void powerTrace(const char* tag, uint32_t intervalMs = 100) {
     const uint32_t now = millis();
     if (static_cast<int32_t>(now - nextPowerTraceMs) < 0) return;
-    nextPowerTraceMs = now + 100;
-    Serial.printf("[trace] %s t=%lu supercap=%dmV flt=%d\n", tag, static_cast<unsigned long>(now),
-                  power::supercapMillivolts(), power::fltHigh());
+    nextPowerTraceMs = now + intervalMs;
+    powerlog::logf("[trace] %s t=%lu supercap=%dmV flt=%d", tag, static_cast<unsigned long>(now),
+                   power::supercapMillivolts(), power::fltHigh());
+}
+
+// Called by power::waitForRestore() every 100 ms after spindown, until power
+// returns or the supercap runs out. The slower trace here is the "how long
+// does the board survive" curve; the power log keeps it if we never return.
+void waitPowerIdle() {
+    feedWatchdog();
+    powerTrace("off", 500);
+    powerlog::service();
 }
 
 uint32_t samplesToMs(uint32_t samples) { return samples * 1000 / cfg::SAMPLE_RATE; }
@@ -259,7 +272,7 @@ void handleSerial() {
             case 'h':
                 Serial.println("firmware v" FIRMWARE_VERSION);
                 Serial.println("h help | s stats | t stress on/off | p simulate power loss | "
-                               "a toggle simulated activity | + / - volume | n next pack | r reboot | b bootloader");
+                               "a toggle simulated activity | + / - volume | n next pack | l power log | r reboot | b bootloader");
                 break;
             case 's': printStats(); break;
             case 't':
@@ -298,6 +311,7 @@ void handleSerial() {
                 rp2040.reboot();
                 break;
             }
+            case 'l': powerlog::printLast(); break;
             case 'r': rp2040.reboot(); break;
             case 'b': rp2040.rebootToBootloader(); break;
             default: break;
@@ -338,6 +352,7 @@ void boot() {
     io::setSimulation(settings.simulationMode);
     printSettings(settings);
     power::begin(settings.powerDetection);
+    powerlog::begin();
 
     bool havePack = false;
     if (watchdog_hw->scratch[0] == PACK_OVERRIDE_MAGIC) {
@@ -399,7 +414,10 @@ void enterRun() {
 }
 
 void enterSpindown() {
-    Serial.printf("[power] loss detected, supercap %d mV\n", power::supercapMillivolts());
+    powerlog::start(power::simulated() ? "simulated (serial p)" : "FLT low");
+    powerlog::logf("[power] loss detected, firmware v" FIRMWARE_VERSION ", pack %s, supercap %d mV", pack,
+                   power::supercapMillivolts());
+    maxLoopGapUs = 0;
     stopStress();
     audio::stop(VOICE_IDLE);
     audio::stop(VOICE_ACCESS);
@@ -408,7 +426,7 @@ void enterSpindown() {
     io::rgbOff();
     io::hddLed(false);
     if (settings.playSpindown && startSpindownVoice()) {
-        Serial.println("[power] spindown");
+        powerlog::logf("[power] spindown");
     }
     state = State::Spindown;
 }
@@ -439,6 +457,10 @@ void setup() {
 }
 
 void loop() {
+    const uint32_t loopStartUs = micros();
+    if (lastLoopStartUs && loopStartUs - lastLoopStartUs > maxLoopGapUs) maxLoopGapUs = loopStartUs - lastLoopStartUs;
+    lastLoopStartUs = loopStartUs;
+    powerlog::service();
     feedWatchdog();
     checkCore1();
     handleSerial();
@@ -466,14 +488,16 @@ void loop() {
             powerTrace("spindown");
             if (!audio::isPlaying(VOICE_SPINDOWN)) {
                 io::ampOff();
-                Serial.printf("[power] spindown complete, supercap %d mV\n", power::supercapMillivolts());
+                powerlog::logf("[power] spindown complete, supercap %d mV, longest core 0 stall %lu us",
+                               power::supercapMillivolts(), static_cast<unsigned long>(maxLoopGapUs));
                 state = State::WaitPower;
             }
             break;
 
         case State::WaitPower:
-            power::waitForRestore(feedWatchdog);
-            Serial.println("[power] restarting");
+            power::waitForRestore(waitPowerIdle);
+            powerlog::logf("[power] restarting");
+            powerlog::flush();
             Serial.flush();
             rp2040.reboot();
             break;

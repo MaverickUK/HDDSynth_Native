@@ -106,6 +106,9 @@ incompatible SD layout or settings.json changes) and tag that commit
 - `sd_streamer.*`: core 0 only. WAV parsing, ring refill, looping, retries,
   card re-init and file reopen.
 - `power.*`: FLT interrupt with 3 ms confirm, supercap ADC, restore detection.
+- `powerlog.*`: from power loss onwards, logs power lines to `/powerlog.bin`
+  with raw sector writes so they survive the board dying; `l` prints them.
+  The sector format (`powerlog_format.*`) is pure C++ and host-tested.
 - `main.cpp`: state machine BOOT → SPINUP → RUN → SPINDOWN → WAIT_POWER,
   serial console, watchdog (fed only while the core 1 heartbeat advances),
   stress test.

@@ -10,6 +10,7 @@ void begin(bool detectionEnabled);
 bool lost();
 // Force a simulated power loss (serial 'p' command).
 void simulateLoss();
+bool simulated();         // the loss came from simulateLoss()
 bool fltHigh();
 float supercapVolts();
 int supercapMillivolts();   // for logging (printf has no float support)

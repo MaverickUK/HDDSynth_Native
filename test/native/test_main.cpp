@@ -1,5 +1,5 @@
 // Host-side unit tests for the platform-independent firmware code:
-// WAV parsing, the SPSC ring buffer and the mixer (including a two-thread
+// WAV parsing, the power log sector format, the SPSC ring buffer and the mixer (including a two-thread
 // producer/consumer test that mirrors core 0 / core 1).
 //
 // Run: test/run_native_tests.sh [path/to/HDDSynth_Samples]
@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "mixer.h"
+#include "powerlog_format.h"
 #include "ring_buffer.h"
 #include "wav.h"
 
@@ -364,6 +365,57 @@ TEST(mixer_stream_two_threads_no_gaps) {
     CHECK_EQ(v[0].underrunSamples.load(), 0u);
 }
 
+
+// ---- power log sector format ------------------------------------------------
+
+TEST(powerlog_crc32_known_value) {
+    const char* s = "123456789";  // the standard CRC-32 check value
+    CHECK_EQ(powerlog::crc32(reinterpret_cast<const uint8_t*>(s), 9), 0xCBF43926u);
+}
+
+TEST(powerlog_sector_round_trip) {
+    uint8_t sector[powerlog::SECTOR_BYTES];
+    const char* line = "[trace] spindown t=49104 supercap=4105mV flt=0\n";
+    powerlog::encodeSector(sector, 7, 3, line, std::strlen(line));
+    uint32_t session = 0;
+    uint16_t index = 0;
+    const char* text = nullptr;
+    CHECK_EQ(powerlog::decodeSector(sector, session, index, text), (int)std::strlen(line));
+    CHECK_EQ(session, 7u);
+    CHECK_EQ(index, 3);
+    CHECK(text && std::memcmp(text, line, std::strlen(line)) == 0);
+}
+
+TEST(powerlog_sector_full_and_clamped) {
+    uint8_t sector[powerlog::SECTOR_BYTES];
+    std::vector<char> big(powerlog::TEXT_BYTES + 100, 'x');
+    powerlog::encodeSector(sector, 1, 0, big.data(), big.size());
+    uint32_t session;
+    uint16_t index;
+    const char* text;
+    CHECK_EQ(powerlog::decodeSector(sector, session, index, text), (int)powerlog::TEXT_BYTES);
+}
+
+TEST(powerlog_sector_rejects_blank_and_torn) {
+    uint8_t sector[powerlog::SECTOR_BYTES];
+    uint32_t session;
+    uint16_t index;
+    const char* text;
+    std::memset(sector, 0, sizeof(sector));
+    CHECK_EQ(powerlog::decodeSector(sector, session, index, text), -1);
+    std::memset(sector, 0xFF, sizeof(sector));  // erased flash / unwritten card
+    CHECK_EQ(powerlog::decodeSector(sector, session, index, text), -1);
+
+    powerlog::encodeSector(sector, 2, 0, "hello\n", 6);
+    sector[powerlog::HEADER_BYTES + 1] ^= 0x01;  // one flipped bit in the text: torn write
+    CHECK_EQ(powerlog::decodeSector(sector, session, index, text), -1);
+
+    powerlog::encodeSector(sector, 2, 0, "hello\n", 6);
+    sector[10] = 0xFF;  // length beyond the sector
+    sector[11] = 0xFF;
+    CHECK_EQ(powerlog::decodeSector(sector, session, index, text), -1);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -372,6 +424,10 @@ int main(int argc, char** argv) {
     RUN(wav_bogus_data_length_clamped);
     RUN(wav_rejects);
     RUN(wav_real_sample_packs);
+    RUN(powerlog_crc32_known_value);
+    RUN(powerlog_sector_round_trip);
+    RUN(powerlog_sector_full_and_clamped);
+    RUN(powerlog_sector_rejects_blank_and_torn);
     RUN(ring_wraparound);
     RUN(ring_two_threads);
     RUN(mixer_unity_passthrough_and_end);

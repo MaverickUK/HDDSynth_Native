@@ -54,6 +54,14 @@ int packIndex(const char* name);
 // The pack at `index` (wrapping), and how many packs there are.
 bool packByIndex(int index, char* out, size_t outLen, int& count);
 
+// Raw sector access, for logs that must survive power loss (see powerlog).
+// reserveFile creates `path` as one contiguous run of `bytes` (or reuses it)
+// and returns its sectors, which can then be written without touching any
+// filesystem metadata.
+bool reserveFile(const char* path, uint32_t bytes, uint32_t& firstSector, uint32_t& sectors);
+bool readSector(uint32_t sector, uint8_t* dst);
+bool writeSector(uint32_t sector, const uint8_t* src);
+
 bool readTextFile(const char* path, char* buf, size_t bufLen, size_t& outLen);
 
 Stats& stats();

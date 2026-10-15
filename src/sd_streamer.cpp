@@ -364,6 +364,33 @@ bool packByIndex(int index, char* out, size_t outLen, int& count) {
     return true;
 }
 
+bool reserveFile(const char* path, uint32_t bytes, uint32_t& firstSector, uint32_t& sectors) {
+    if (!mounted) return false;
+    FsFile f;
+    if (card.exists(path)) {
+        if (!f.open(path, O_RDONLY)) return false;
+    } else if (!f.open(path, O_RDWR | O_CREAT) || !f.preAllocate(bytes)) {
+        f.close();
+        card.remove(path);
+        return false;
+    }
+    Sector_t first = 0, last = 0;
+    const bool contiguous = f.contiguousRange(&first, &last);
+    f.close();
+    if (!contiguous || (last - first + 1) * 512 < bytes) {
+        Serial.printf("[sd] %s is not a contiguous %lu bytes; delete it to recreate\n", path,
+                      static_cast<unsigned long>(bytes));
+        return false;
+    }
+    firstSector = static_cast<uint32_t>(first);
+    sectors = bytes / 512;
+    return true;
+}
+
+bool readSector(uint32_t sector, uint8_t* dst) { return mounted && card.card()->readSector(sector, dst); }
+
+bool writeSector(uint32_t sector, const uint8_t* src) { return mounted && card.card()->writeSector(sector, src); }
+
 bool readTextFile(const char* path, char* buf, size_t bufLen, size_t& outLen) {
     outLen = 0;
     FsFile f;
