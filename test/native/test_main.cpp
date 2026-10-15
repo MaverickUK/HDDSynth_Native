@@ -20,6 +20,7 @@
 #include "mixer.h"
 #include "beep.h"
 #include "button.h"
+#include "colour.h"
 #include "crc32.h"
 #include "persist_format.h"
 #include "powerlog_format.h"
@@ -648,6 +649,29 @@ TEST(mixer_plays_a_beep_then_goes_idle) {
     CHECK(n >= p.totalSamples && n < p.totalSamples + 128);  // ends within a block
 }
 
+
+// ---- colours ------------------------------------------------------------------
+
+TEST(hue_gives_vivid_colours) {
+    uint8_t r, g, b;
+    hueToRgb(0, r, g, b);
+    CHECK(r == 255 && g == 0 && b == 0);
+    hueToRgb(120, r, g, b);
+    CHECK(r == 0 && g == 255 && b == 0);
+    hueToRgb(240, r, g, b);
+    CHECK(r == 0 && g == 0 && b == 255);
+    hueToRgb(360 + 60, r, g, b);  // wraps: yellow
+    CHECK(r == 255 && g == 255 && b == 0);
+    // Every hue: one channel full, one off (fully saturated and bright, never grey).
+    bool vivid = true;
+    for (uint16_t h = 0; h < 360; ++h) {
+        hueToRgb(h, r, g, b);
+        const uint8_t hi = std::max({r, g, b}), lo = std::min({r, g, b});
+        vivid &= hi == 255 && lo == 0;
+    }
+    CHECK(vivid);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -677,6 +701,7 @@ int main(int argc, char** argv) {
     RUN(beep_led_flashes_once_per_note);
     RUN(beep_triangle_shape);
     RUN(mixer_plays_a_beep_then_goes_idle);
+    RUN(hue_gives_vivid_colours);
     RUN(ring_wraparound);
     RUN(ring_two_threads);
     RUN(mixer_unity_passthrough_and_end);

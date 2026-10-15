@@ -55,6 +55,9 @@ constexpr uint32_t BUTTON_DEBOUNCE_MS   = 20;
 constexpr uint32_t ACTION_SHORT_PRESS_MAX_MS = 1000;  // ACTION_BUTTON_SHORT_PRESS_MAX_S
 constexpr uint32_t ACTION_LONG_PRESS_MS      = 3000;  // ACTION_BUTTON_LONG_PRESS_S
 
+// ---- Demo mode ----
+constexpr uint32_t DEMO_PACK_MS = 60000;  // how long each pack plays before spinning down
+
 // ---- Safety ----
 constexpr uint32_t WATCHDOG_MS        = 2000;
 constexpr uint32_t CORE1_STALL_MS     = 500;   // core1 heartbeat must advance within this

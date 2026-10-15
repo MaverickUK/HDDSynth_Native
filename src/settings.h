@@ -19,6 +19,7 @@ struct Settings {
     char samplePack[64] = {0};
     bool randomSamplePack = false;   // RANDOM_SAMPLE_PACK: overrides SAMPLE_PACK
     bool alwaysPlayJingle = false;   // ALWAYS_PLAY_JINGLE (a settings.py constant in Python)
+    bool demoMode = false;           // DEMO_MODE: cycle through every pack (see main.cpp)
 };
 
 // Parse JSON text into `s` (unknown keys ignored, bad values keep defaults).

@@ -38,6 +38,13 @@ SD card layout and `settings.json` keys are the same as the CircuitPython
 version (`/samples/<pack>/{spinup,idle,access,spindown}.wav`). Add
 `"POWER_DETECTION": false` to run from USB only, with no power-loss detection.
 
+**Demo mode** (new in this firmware): add `"DEMO_MODE": true` to
+`settings.json`. Each pack then spins up, plays idle/access with simulated
+HDD activity for 60 seconds, plays its spindown, and hands over to the next
+pack, looping forever. Each pack gets a random activity LED colour. A short
+press of the action button skips to the next pack. Demo pack changes are
+not saved, so after a power cut it starts again from the usual pack.
+
 Not in this proof of concept yet: rotary encoder, action button / pack
 switching, beeps, NVM persistence, jingle, OLED.
 
@@ -103,6 +110,7 @@ n  next sample pack (same as a short press of the action button; remembered)
 l  print the log of the last power loss (kept on the SD card)
 k  play the next beep profile (to audition them)
 d  list the SD card's root directory
+m  demo mode on/off (as DEMO_MODE, not saved)
 r  reboot
 b  reboot into the USB bootloader
 ```

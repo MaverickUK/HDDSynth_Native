@@ -13,6 +13,7 @@
 
 #include "audio_engine.h"
 #include "beeps.h"
+#include "colour.h"
 #include "config.h"
 #include "controls.h"
 #include "io.h"
@@ -44,13 +45,14 @@ void loop1() { audio::core1Loop(); }
 // ---------------------------------------------------------------------------
 namespace {
 
-enum class State { Boot, Jingle, Spinup, Run, Spindown, WaitPower, Halted };
+enum class State { Boot, Jingle, Spinup, Run, DemoSpindown, Spindown, WaitPower, Halted };
 const char* stateName(State s) {
     switch (s) {
         case State::Boot: return "BOOT";
         case State::Jingle: return "JINGLE";
         case State::Spinup: return "SPINUP";
         case State::Run: return "RUN";
+        case State::DemoSpindown: return "DEMO_SPINDOWN";
         case State::Spindown: return "SPINDOWN";
         case State::WaitPower: return "WAIT_POWER";
         case State::Halted: return "HALTED";
@@ -87,11 +89,15 @@ uint32_t lastHeartbeatChangeMs = 0;
 bool core1Stalled = false;
 
 uint32_t nextStatsMs = 0;
+uint32_t demoEndsMs = 0;  // DEMO_MODE: when the current pack spins down
 uint32_t nextPowerTraceMs = 0;
 uint32_t lastLoopStartUs = 0;
 uint32_t maxLoopGapUs = 0;  // longest gap between loop() passes since power loss
 
 void enterRun();
+void startSpinup();
+void pickDemoColour();
+bool startSpindownVoice();
 void changePack();
 void factoryReset();
 bool startJingle();
@@ -288,7 +294,7 @@ void handleSerial() {
             case 'h':
                 Serial.println("firmware v" FIRMWARE_VERSION);
                 Serial.println("h help | s stats | t stress on/off | p simulate power loss | "
-                               "a toggle simulated activity | + / - volume | n next pack | k beep test | l power log | d list SD root | r reboot | b bootloader");
+                               "a toggle simulated activity | + / - volume | n next pack | k beep test | l power log | d list SD root | m demo mode | r reboot | b bootloader");
                 break;
             case 's': printStats(); break;
             case 't':
@@ -330,6 +336,16 @@ void handleSerial() {
             }
             case 'l': powerlog::printLast(); break;
             case 'd': sd::listDir("/"); break;
+            case 'm':  // demo mode on/off without editing settings.json (not saved)
+                settings.demoMode = !settings.demoMode;
+                if (settings.demoMode) {
+                    settings.simulationMode = true;
+                    io::setSimulation(true);
+                    pickDemoColour();
+                    demoEndsMs = millis() + cfg::DEMO_PACK_MS;
+                }
+                Serial.printf("[demo] %s\n", settings.demoMode ? "on" : "off");
+                break;
             case 'r': rp2040.reboot(); break;
             case 'b': rp2040.rebootToBootloader(); break;
             default: break;
@@ -382,6 +398,47 @@ void stopPackVoices() {
     lastAccess = false;
 }
 
+// Unload the current pack and load the next usable one into `pack`, skipping
+// broken ones. Halts (and returns false) if none is usable. Voices stopped.
+bool loadNextPack() {
+    unloadPack();
+    const int current = sd::packIndex(pack);  // -1 if it has gone: start from the first
+    int count = 0;
+    for (int step = 1;; ++step) {
+        if (!sd::packByIndex(current + step, pack, sizeof(pack), count) || step > count) {
+            halt("no usable sample pack", beeps::Type::CorruptedPack);
+            return false;
+        }
+        if (loadPack()) return true;
+        unloadPack();  // broken pack: try the next one
+    }
+}
+
+// ---- demo mode -----------------------------------------------------------------
+// DEMO_MODE: each pack spins up, plays idle/access with simulated activity
+// for DEMO_PACK_MS, then plays its spindown, and the next pack takes over
+// with a new random activity LED colour. The packs are not saved to flash:
+// a write per minute would wear the sector out in months.
+
+void pickDemoColour() {
+    uint8_t* c = settings.activityLedColour;
+    hueToRgb(static_cast<uint16_t>(random(360)), c[0], c[1], c[2]);
+    Serial.printf("[demo] %s, LED colour %u,%u,%u\n", pack, c[0], c[1], c[2]);
+}
+
+void enterDemoSpindown() {
+    Serial.println("[demo] spinning down");
+    stopPackVoices();
+    if (settings.playSpindown) startSpindownVoice();
+    state = State::DemoSpindown;
+}
+
+void nextDemoPack() {
+    if (!loadNextPack()) return;
+    pickDemoColour();
+    startSpinup();  // then RUN, which restarts the demo timer
+}
+
 // Short press of the action button (or serial 'n'): switch to the next pack
 // without rebooting, and remember it (sample_changer.next_pack() plus the
 // reload callback in the CircuitPython firmware). Spinup is not replayed.
@@ -389,17 +446,7 @@ void changePack() {
     stopPackVoices();
     beepAndWait(beeps::Type::ChangePack);
     io::ampOff();
-    unloadPack();
-    const int current = sd::packIndex(pack);  // -1 if it has gone: start from the first
-    int count = 0;
-    for (int step = 1;; ++step) {
-        if (!sd::packByIndex(current + step, pack, sizeof(pack), count) || step > count) {
-            halt("no usable sample pack", beeps::Type::CorruptedPack);
-            return;
-        }
-        if (loadPack()) break;
-        unloadPack();  // broken pack: try the next one
-    }
+    if (!loadNextPack()) return;
     PersistedState& saved = persist::state();
     strncpy(saved.desiredPack, pack, sizeof(saved.desiredPack) - 1);
     // The audio is stopped and the amp muted, so pausing core 1 for the flash
@@ -474,6 +521,7 @@ void boot() {
     if (sd::readTextFile("/settings.json", json, sizeof(json), len) && !parseSettingsJson(json, settings)) {
         Serial.println("[settings] settings.json is not valid JSON, using defaults");
     }
+    if (settings.demoMode) settings.simulationMode = true;  // the demo fakes HDD activity
     io::setSimulation(settings.simulationMode);
     controls::begin(settings);
     printSettings(settings);
@@ -513,6 +561,11 @@ void boot() {
     lastHeartbeatChangeMs = millis();
     io::ampOn();
 
+    if (settings.demoMode) {
+        Serial.printf("[demo] on: %lu s per pack, cycling through every pack\n",
+                      static_cast<unsigned long>(cfg::DEMO_PACK_MS / 1000));
+        pickDemoColour();
+    }
     if (startJingle()) state = State::Jingle;  // spinup follows it
     else startSpinup();
 }
@@ -567,6 +620,7 @@ void enterRun() {
     Serial.println("[run] idle/access looping");
     audio::i2sUnderflowed();  // clear the flag left by I2S starting before audio existed
     nextStatsMs = millis() + 5000;
+    demoEndsMs = millis() + cfg::DEMO_PACK_MS;
     state = State::Run;
 }
 
@@ -583,7 +637,9 @@ void enterSpindown() {
     sd::closeStream(streamSpinup);  // frees the one-shot ring for a streamed spindown
     io::rgbOff();
     io::hddLed(false);
-    if (settings.playSpindown && startSpindownVoice()) {
+    if (state == State::DemoSpindown && audio::isPlaying(VOICE_SPINDOWN)) {
+        powerlog::logf("[power] demo spindown already playing, letting it finish");
+    } else if (settings.playSpindown && startSpindownVoice()) {
         powerlog::logf("[power] spindown");
     }
     state = State::Spindown;
@@ -651,9 +707,21 @@ void loop() {
             sd::pump();
             const controls::Action action = controls::poll();
             if (power::lost()) enterSpindown();
-            else if (action == controls::Action::NextPack) changePack();
+            else if (action == controls::Action::NextPack) settings.demoMode ? enterDemoSpindown() : changePack();
             else if (action == controls::Action::FactoryReset) factoryReset();
+            else if (settings.demoMode && static_cast<int32_t>(millis() - demoEndsMs) >= 0) enterDemoSpindown();
             else runStep();
+            break;
+        }
+
+        case State::DemoSpindown: {
+            sd::pump();
+            const controls::Action action = controls::poll();
+            beeps::service();
+            audio::setLevel(VOICE_SPINDOWN, levelFromFloat(settings.volume));
+            if (power::lost()) enterSpindown();
+            else if (action == controls::Action::FactoryReset) factoryReset();
+            else if (!audio::isPlaying(VOICE_SPINDOWN)) nextDemoPack();
             break;
         }
 

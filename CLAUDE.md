@@ -150,6 +150,13 @@ serial stats and stress test.
 **Next:** run the hardware test plan in the README and fix what it finds.
 The first thing to confirm is that the build boots on the RP2354A.
 
+**New features (not in the Python firmware):**
+- `DEMO_MODE` (settings.json): cycle through every pack, 60 s each
+  (`cfg::DEMO_PACK_MS`), with the real spindown between packs
+  (`DEMO_SPINDOWN` state) and a random hue for the activity LED. Forces
+  simulated activity. Never writes flash (a write per minute would wear the
+  sector out). Serial `m` toggles it for testing.
+
 **Still to port from the Python firmware:**
 - [x] Rotary encoder: volume / balance, with button toggling the mode
       (`controls.*`, decoding in `quadrature.h`).

@@ -49,6 +49,7 @@ bool parseSettingsJson(const char* json, Settings& s) {
     parseColour(doc["ACTIVITY_LED_COLOUR"], s.activityLedColour);
     if (doc["RANDOM_SAMPLE_PACK"].is<bool>()) s.randomSamplePack = doc["RANDOM_SAMPLE_PACK"];
     if (doc["ALWAYS_PLAY_JINGLE"].is<bool>()) s.alwaysPlayJingle = doc["ALWAYS_PLAY_JINGLE"];
+    if (doc["DEMO_MODE"].is<bool>()) s.demoMode = doc["DEMO_MODE"];
     if (doc["SAMPLE_PACK"].is<const char*>()) {
         strncpy(s.samplePack, doc["SAMPLE_PACK"].as<const char*>(), sizeof(s.samplePack) - 1);
     }
@@ -57,8 +58,8 @@ bool parseSettingsJson(const char* json, Settings& s) {
 
 void printSettings(const Settings& s) {
     Serial.printf("[settings] pack='%s' volume=%d%% balance=%d%% sim=%d spinup=%d spindown=%d idle=%d "
-                  "hold=%lums power_detect=%d random_pack=%d always_jingle=%d\n",
+                  "hold=%lums power_detect=%d random_pack=%d always_jingle=%d demo=%d\n",
                   s.samplePack, static_cast<int>(s.volume * 100 + 0.5f), static_cast<int>(s.balance * 100 + 0.5f), s.simulationMode, s.playSpinup, s.playSpindown,
                   s.playIdle, static_cast<unsigned long>(s.accessHoldMs), s.powerDetection, s.randomSamplePack,
-                  s.alwaysPlayJingle);
+                  s.alwaysPlayJingle, s.demoMode);
 }
