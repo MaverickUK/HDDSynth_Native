@@ -21,6 +21,7 @@ constexpr uint32_t STOP_TIMEOUT_MS = 100;  // core 1 acks within one 8 ms block
 namespace audio {
 
 void core1Setup() {
+    beepInit();  // before any mixing: only core 1 reads the table
     i2s.setBCLK(cfg::PIN_I2S_BCLK);  // LRCLK = BCLK + 1
     i2s.setDATA(cfg::PIN_I2S_DATA);
     i2s.setBitsPerSample(16);
@@ -92,6 +93,7 @@ bool startMemory(VoiceId id, const int16_t* data, uint32_t samples, bool loop, u
     v.mem = data;
     v.memLen = samples;
     v.ring = nullptr;
+    v.beep = nullptr;
     v.loop = loop;
     v.eof.store(false, std::memory_order_relaxed);
     return begin(v, level);
@@ -104,6 +106,18 @@ bool startStream(VoiceId id, SampleRing* ring, uint16_t level) {
     v.mem = nullptr;
     v.memLen = 0;
     v.ring = ring;
+    v.beep = nullptr;
+    v.loop = false;
+    return begin(v, level);
+}
+
+bool startBeep(VoiceId id, const BeepPattern* pattern, uint16_t level) {
+    if (!stop(id)) return false;
+    Voice& v = voices[id];
+    v.mem = nullptr;
+    v.memLen = 0;
+    v.ring = nullptr;
+    v.beep = pattern;
     v.loop = false;
     return begin(v, level);
 }

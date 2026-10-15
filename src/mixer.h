@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "beep.h"
 #include "config.h"
 #include "ring_buffer.h"
 
@@ -39,11 +40,12 @@ struct Voice {
     const int16_t* mem = nullptr;           // memory mode source (nullptr = stream mode)
     uint32_t memLen = 0;
     SampleRing* ring = nullptr;             // stream mode source
+    const BeepPattern* beep = nullptr;      // beep mode: synthesised here (takes priority)
     bool loop = false;                      // memory mode only; streams loop in the producer
 
     // --- owned by core 1 ---
     uint32_t seenGen = 0;
-    uint32_t memPos = 0;
+    uint32_t memPos = 0;                    // memory and beep modes: samples played
     uint16_t curLevel = 0;
 
     // --- statistics (written by core 1, read by core 0) ---

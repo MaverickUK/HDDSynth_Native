@@ -152,11 +152,13 @@ The first thing to confirm is that the build boots on the RP2354A.
 
 **Still to port from the Python firmware:**
 - [x] Rotary encoder: volume / balance, with button toggling the mode
-      (`controls.*`, decoding in `quadrature.h`). Mode-change beeps are a
-      TODO until beeps are ported.
+      (`controls.*`, decoding in `quadrature.h`).
 - [x] Action button: short press = next pack (hot swap, no reboot, saved),
-      long press = factory reset (clears saved state, reboots). Beeps TODO.
-- [ ] Beeps and RGB flash patterns (`beep.py`, `beep_profiles.py`)
+      long press = factory reset (clears saved state, reboots).
+- [x] Beeps and RGB flash patterns: `beep.*` synthesises them in the mixer
+      (no buffer), `beeps.*` holds the profiles and drives the LED. Serial
+      `k` auditions them. (Python's yellow "busy" flashing at boot and the
+      RGB startup test are not ported.)
 - [ ] NVM persistence: desired pack and jingle flag are done (`persist.*`);
       volume/balance with a debounce still to do (`persisted_float.py`,
       off by default in Python). Flash writes pause core 1, so only write

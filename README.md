@@ -101,6 +101,7 @@ a  toggle simulated HDD activity
 +  / -  volume
 n  next sample pack (same as a short press of the action button; remembered)
 l  print the log of the last power loss (kept on the SD card)
+k  play the next beep profile (to audition them)
 r  reboot
 b  reboot into the USB bootloader
 ```

@@ -1,12 +1,14 @@
 // Host-side unit tests for the platform-independent firmware code:
 // WAV parsing, the power log and persisted-state formats, encoder and
-// button handling, the SPSC ring buffer and the mixer (including a two-thread
+// button handling, beep synthesis, the SPSC ring buffer and the mixer (including a two-thread
 // producer/consumer test that mirrors core 0 / core 1).
 //
 // Run: test/run_native_tests.sh [path/to/HDDSynth_Samples]
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <dirent.h>
 #include <fstream>
@@ -16,6 +18,7 @@
 #include <vector>
 
 #include "mixer.h"
+#include "beep.h"
 #include "button.h"
 #include "crc32.h"
 #include "persist_format.h"
@@ -567,6 +570,81 @@ TEST(persist_long_name_is_truncated_and_terminated) {
     CHECK_EQ(std::strlen(out.desiredPack), sizeof(out.desiredPack) - 1);
 }
 
+
+// ---- beep synthesis -----------------------------------------------------------
+
+TEST(beep_timing_matches_python_profiles) {
+    // VOLUME_MODE: 2 x 100 ms notes, 50 ms release buffer each, 40 ms gap.
+    const BeepPattern p = makeBeep(16000, 1200, 2, 100, BeepWave::Triangle);
+    CHECK_EQ(p.heldSamples, 1600u);
+    CHECK_EQ(p.periodSamples, 1600u + 800u + 640u);
+    CHECK_EQ(p.totalSamples, 2u * (1600u + 800u) + 640u);  // 340 ms
+    // FACTORY_RESET: one 1 s note plus its release buffer.
+    CHECK_EQ(makeBeep(16000, 1200, 1, 1000, BeepWave::Triangle).totalSamples, 16800u);
+    CHECK_EQ(makeBeep(16000, 1200, 0, 100, BeepWave::Sine).totalSamples, 0u);
+}
+
+TEST(beep_envelope_fades_in_and_out) {
+    beepInit();
+    const BeepPattern p = makeBeep(16000, 400, 1, 100, BeepWave::Sine);
+    int peak = 0, firstMs = 0, lastMs = 0;
+    for (uint32_t n = 0; n < p.totalSamples; ++n) {
+        const int a = std::abs(beepSample(p, n));
+        if (a > peak) peak = a;
+        if (n < 16) firstMs = std::max(firstMs, a);                       // first 1 ms
+        if (n >= p.heldSamples + p.releaseSamples - 16 && n < p.heldSamples + p.releaseSamples)
+            lastMs = std::max(lastMs, a);                                 // last 1 ms of the release
+    }
+    CHECK(peak > 32000 && peak <= 32767);  // the attack reaches full scale
+    CHECK(firstMs < 2000);                 // starts from silence: no click
+    CHECK(lastMs < 1000);                  // and fades back to it
+    // Silent after the release, and after the end of the pattern.
+    CHECK_EQ(beepSample(p, p.heldSamples + p.releaseSamples + 10), 0);
+    CHECK_EQ(beepSample(p, p.totalSamples), 0);
+}
+
+TEST(beep_led_flashes_once_per_note) {
+    const BeepPattern p = makeBeep(16000, 1200, 3, 100, BeepWave::Triangle);  // BALANCE_MODE
+    int flashes = 0;
+    bool was = false;
+    for (uint32_t n = 0; n < p.totalSamples + 100; ++n) {
+        const bool on = beepNoteHeld(p, n);
+        if (on && !was) ++flashes;
+        was = on;
+    }
+    CHECK_EQ(flashes, 3);
+}
+
+TEST(beep_triangle_shape) {
+    beepInit();
+    const BeepPattern p = makeBeep(16000, 1000, 1, 1000, BeepWave::Triangle);
+    // Well into the sustain (envelope 0.8): one 1 kHz cycle is 16 samples,
+    // starting at the bottom of the triangle and peaking half way.
+    const uint32_t base = 16000 / 2;  // 500 ms, a whole number of cycles in
+    CHECK(beepSample(p, base) < -26000);
+    CHECK(beepSample(p, base + 8) > 26000);
+}
+
+TEST(mixer_plays_a_beep_then_goes_idle) {
+    beepInit();
+    const BeepPattern p = makeBeep(16000, 1200, 1, 100, BeepWave::Triangle);
+    Voice v[1];
+    v[0].beep = &p;
+    v[0].targetLevel = LEVEL_UNITY;
+    v[0].playGen.fetch_add(1);
+    v[0].state = VS_PLAYING;
+    int16_t out[128];
+    bool match = true;
+    uint32_t n = 0;
+    while (v[0].state.load() == VS_PLAYING && n < 100000) {
+        mixBlock(v, 1, out, 128);
+        for (int i = 0; i < 128; ++i, ++n) match &= out[i] == beepSample(p, n);
+    }
+    CHECK(match);
+    CHECK_EQ(v[0].state.load(), VS_IDLE);
+    CHECK(n >= p.totalSamples && n < p.totalSamples + 128);  // ends within a block
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -591,6 +669,11 @@ int main(int argc, char** argv) {
     RUN(persist_round_trip);
     RUN(persist_rejects_blank_and_corrupt);
     RUN(persist_long_name_is_truncated_and_terminated);
+    RUN(beep_timing_matches_python_profiles);
+    RUN(beep_envelope_fades_in_and_out);
+    RUN(beep_led_flashes_once_per_note);
+    RUN(beep_triangle_shape);
+    RUN(mixer_plays_a_beep_then_goes_idle);
     RUN(ring_wraparound);
     RUN(ring_two_threads);
     RUN(mixer_unity_passthrough_and_end);

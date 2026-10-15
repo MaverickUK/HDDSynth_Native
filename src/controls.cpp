@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <atomic>
 
+#include "beeps.h"
 #include "button.h"
 #include "config.h"
 #include "quadrature.h"
@@ -78,7 +79,7 @@ Action poll() {
     if (encoderButton.update(digitalRead(cfg::PIN_ENC_BUTTON) == LOW, now) == Button::Event::Pressed) {
         currentMode = currentMode == Mode::Volume ? Mode::Balance : Mode::Volume;
         Serial.printf("[encoder] mode: %s\n", currentMode == Mode::Volume ? "volume" : "balance");
-        // TODO(beeps): 2 short high beeps for volume, 3 for balance (beep_profiles.py).
+        beeps::play(currentMode == Mode::Volume ? beeps::Type::VolumeMode : beeps::Type::BalanceMode);
     }
     int32_t detents = pendingDetents.exchange(0, std::memory_order_relaxed);
     if (detents != 0) {

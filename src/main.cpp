@@ -5,13 +5,14 @@
 //
 // Serial commands (115200, USB): h help, s stats, t stress test on/off,
 // p simulate power loss, a toggle simulated activity, + / - volume,
-// n next sample pack (for testing), l print the last power-loss log,
+// n next sample pack, k play the next beep profile, l print the last power-loss log,
 // r reboot, b reboot to USB bootloader.
 #include <Arduino.h>
 
 #include <initializer_list>
 
 #include "audio_engine.h"
+#include "beeps.h"
 #include "config.h"
 #include "controls.h"
 #include "io.h"
@@ -59,6 +60,7 @@ const char* stateName(State s) {
 State state = State::Boot;
 Settings settings;
 char pack[64] = {0};
+beeps::Type haltBeep = beeps::Type::NoSdCard;  // the error the red LED repeats in HALTED
 
 // One shared ring for the one-shot samples (spinup at boot, spindown if it
 // has to stream), plus one per looping voice.
@@ -121,9 +123,21 @@ uint16_t accessLevel(bool active) {
     return active ? levelFromFloat(settings.volume * settings.balance) : 0;
 }
 
-void halt(const char* why) {
+// Beep and wait (amp on), calling feedWatchdog() meanwhile. Leaves the amp on.
+void beepAndWait(beeps::Type t) {
+    io::ampOn();
+    beeps::play(t);
+    beeps::waitDone(feedWatchdog);
+}
+
+// Fatal: beep the error once, then repeat its pattern on the red LED
+// (_halt_on_boot_error() in the CircuitPython firmware).
+void halt(const char* why, beeps::Type error) {
     Serial.printf("[fatal] %s\n", why);
+    for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SPINDOWN}) audio::stop(id);
+    beepAndWait(error);
     io::ampOff();
+    haltBeep = error;
     state = State::Halted;
 }
 
@@ -271,7 +285,7 @@ void handleSerial() {
             case 'h':
                 Serial.println("firmware v" FIRMWARE_VERSION);
                 Serial.println("h help | s stats | t stress on/off | p simulate power loss | "
-                               "a toggle simulated activity | + / - volume | n next pack | l power log | r reboot | b bootloader");
+                               "a toggle simulated activity | + / - volume | n next pack | k beep test | l power log | r reboot | b bootloader");
                 break;
             case 's': printStats(); break;
             case 't':
@@ -301,6 +315,16 @@ void handleSerial() {
                 if (state == State::Run) changePack();
                 else Serial.println("[pack] only in RUN");
                 break;
+            case 'k': {  // audition the beeps, one profile per press
+                static int next = 0;
+                static const char* const names[] = {"CHANGE_PACK", "FACTORY_RESET", "VOLUME_MODE", "BALANCE_MODE",
+                                                    "NO_SD_CARD", "NO_PACKS_ON_SD_CARD", "CORRUPTED_PACK",
+                                                    "PACK_NOT_FOUND"};
+                Serial.printf("[beep] %s\n", names[next]);
+                beeps::play(static_cast<beeps::Type>(next));
+                next = (next + 1) % 8;
+                break;
+            }
             case 'l': powerlog::printLast(); break;
             case 'r': rp2040.reboot(); break;
             case 'b': rp2040.rebootToBootloader(); break;
@@ -349,7 +373,6 @@ void unloadPack() {
 void stopPackVoices() {
     stopStress();
     for (VoiceId id : {VOICE_IDLE, VOICE_ACCESS, VOICE_SPINDOWN}) audio::stop(id);
-    io::ampOff();
     io::rgbOff();
     io::hddLed(false);
     lastAccess = false;
@@ -360,13 +383,14 @@ void stopPackVoices() {
 // reload callback in the CircuitPython firmware). Spinup is not replayed.
 void changePack() {
     stopPackVoices();
+    beepAndWait(beeps::Type::ChangePack);
+    io::ampOff();
     unloadPack();
-    // TODO(beeps): CHANGE_PACK beep (beep_profiles.py).
     const int current = sd::packIndex(pack);  // -1 if it has gone: start from the first
     int count = 0;
     for (int step = 1;; ++step) {
         if (!sd::packByIndex(current + step, pack, sizeof(pack), count) || step > count) {
-            halt("no usable sample pack");
+            halt("no usable sample pack", beeps::Type::CorruptedPack);
             return;
         }
         if (loadPack()) break;
@@ -390,7 +414,8 @@ void changePack() {
 void factoryReset() {
     Serial.println("[pack] factory reset");
     stopPackVoices();
-    // TODO(beeps): FACTORY_RESET beep (beep_profiles.py).
+    beepAndWait(beeps::Type::FactoryReset);
+    io::ampOff();
     persist::state() = PersistedState{};
     persist::commit();
     Serial.flush();
@@ -416,7 +441,7 @@ void boot() {
     io::begin(settings);  // amp off, LEDs off before anything else
 
     if (!sd::begin()) {
-        halt("no SD card");
+        halt("no SD card", beeps::Type::NoSdCard);
         return;
     }
 
@@ -438,15 +463,20 @@ void boot() {
     const char* preferred = persist::state().desiredPack;
     if (settings.samplePack[0]) {
         if (sd::packExists(settings.samplePack)) preferred = settings.samplePack;
-        else Serial.printf("[boot] SAMPLE_PACK '%s' not found\n", settings.samplePack);
+        else {
+            Serial.printf("[boot] SAMPLE_PACK '%s' not found\n", settings.samplePack);
+            beepAndWait(beeps::Type::PackNotFound);  // a warning: carry on with another pack
+            io::ampOff();
+        }
     }
     if (!sd::choosePack(preferred, pack, sizeof(pack))) {
-        halt("no sample packs in /samples");
+        halt("no sample packs in /samples", beeps::Type::NoPacksOnSdCard);
         return;
     }
     if (FORCE_STREAMED_SPINDOWN) Serial.println("[boot] test build: FORCE_STREAMED_SPINDOWN");
     if (!loadPack()) {
-        halt("pack is missing idle.wav/access.wav or they are the wrong format (hold the action button 3 s to reset)");
+        halt("pack is missing idle.wav/access.wav or they are the wrong format (hold the action button 3 s to reset)",
+             beeps::Type::CorruptedPack);
         return;
     }
     Serial.printf("[boot] free heap %d\n", rp2040.getFreeHeap());
@@ -501,10 +531,11 @@ void enterSpindown() {
 
 void runStep() {
     const bool active = io::activity();
-    if (active != lastAccess) {
+    const bool beepEnded = beeps::service();  // a beep owns the RGB LED while it plays
+    if (active != lastAccess || beepEnded) {
         lastAccess = active;
         io::hddLed(active);
-        if (settings.activityLedEnabled) {
+        if (settings.activityLedEnabled && !beeps::active()) {
             if (active) io::rgb(settings.activityLedColour[0], settings.activityLedColour[1], settings.activityLedColour[2]);
             else io::rgbOff();
         }
@@ -542,6 +573,7 @@ void loop() {
             sd::pump();
             controls::poll();  // pack changes wait for RUN; volume applies straight away
             audio::setLevel(VOICE_SPINUP, levelFromFloat(settings.volume));
+            beeps::service();
             powerTrace("spinup");
             if (power::lost()) enterSpindown();
             else if (!audio::isPlaying(VOICE_SPINUP)) enterRun();
@@ -579,8 +611,9 @@ void loop() {
         case State::Halted:
             // A factory reset is still possible, e.g. when the saved pack is broken.
             if (controls::poll() == controls::Action::FactoryReset) factoryReset();
-            // Blink red so a headless unit shows the fault; serial stays alive.
-            if ((millis() / 500) % 2) io::rgb(255, 0, 0);
+            // Repeat the error's beep pattern in red so a headless unit shows
+            // which fault it is; serial stays alive.
+            if (beeps::errorLedOn(haltBeep, millis())) io::rgb(255, 0, 0);
             else io::rgbOff();
             delay(10);
             break;

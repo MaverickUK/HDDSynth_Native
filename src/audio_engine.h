@@ -26,6 +26,8 @@ void core1Loop();
 bool startMemory(VoiceId id, const int16_t* data, uint32_t samples, bool loop, uint16_t level);
 // Start a voice reading from a ring the caller has already primed.
 bool startStream(VoiceId id, SampleRing* ring, uint16_t level);
+// Start a synthesised beep. `pattern` must stay valid until the voice is idle.
+bool startBeep(VoiceId id, const BeepPattern* pattern, uint16_t level);
 // Ask core 1 to stop a voice and wait (bounded) until it has. Returns false on timeout.
 bool stop(VoiceId id);
 bool isPlaying(VoiceId id);
