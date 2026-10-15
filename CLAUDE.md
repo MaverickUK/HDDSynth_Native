@@ -55,8 +55,8 @@ or file I/O, and never block core 1.
     4.0 V falling.
   - TPS61094 boost holds VSYS at 4.2 V (OSEL 75 k); supercap charge
     termination 4.15 V (VCHG 75 k); charge current ≈ 250 mA.
-  - Supercap: 1.5 F on paper. The exact fitted part, and so its ESR, is
-    unconfirmed.
+  - Supercap: the schematic says a 1 F 5.5 V radial part (Kitronik). The
+    exact fitted part, and so its ESR, is unconfirmed.
   - Power-loss signal: eFuse /FLT on GP28, open drain with 10 k pull-up, LOW
     on fault. Once the input has fully decayed, FLT floats back high, so
     "power restored" also requires the supercap to be rising (see `power.cpp`).
@@ -68,22 +68,26 @@ or file I/O, and never block core 1.
   - No series termination on the SD SPI lines.
   - TPS63020 PG and the SD card-detect pin aren't connected.
   - VSYS bulk capacitance is thin (about 74 µF nominal MLCC).
-  - **Supercap may not recharge from empty** (seen 2026-10-15, hardware
-    test 6, powered from a Mac's USB-C port). After one real power cut
-    drained it to about 1.1 V, it stayed at about 0 V for 6+ minutes on USB.
-    It should charge at about 0.17 V/s. Before that cut it held 4.1 V.
-    - The TPS61094 (EN and MODE pulled up to VSYS: auto buck/boost mode)
-      only charges when VIN is more than 0.1 V above its boost target
-      (OSEL 75 k = 4.2 V), so VIN_PROT must stay above about 4.3 V.
-    - The eFuse only trips below about 4.0 V, so the board can run on
-      4.0–4.3 V and never charge.
-    - Most likely cause: charging from empty draws an extra 250 mA, which
-      sags VIN_PROT below 4.3 V through the USB port, cable and eFuse.
-    - Not yet confirmed by measurement. Also possible: the TPS61094 won't
-      charge a supercap from near 0 V; its datasheet doesn't say.
-    - Options: a lower boost target (OSEL), a lower ICHG, more VIN
-      headroom, or VIN_PROT sensing so firmware can warn when the
-      backup isn't charging.
+  - **Supercap stopped holding charge after one deep discharge** (seen
+    2026-10-15, hardware test 6, powered from a Mac's USB-C port). A real
+    power cut ran it down to about 1.1 V before the board died. Afterwards
+    it stayed at 0 V on USB for 6+ minutes; it should charge at about
+    0.17 V/s. Before that cut it held 4.1 V.
+    - Measured with a multimeter while running: VIN_PROT = 5.12 V and the
+      supercap = 0 V.
+    - So the input has headroom: the TPS61094 in auto mode needs VIN above
+      about 4.3 V (boost target 4.2 V, OSEL 75 k, plus 0.1 V).
+    - Leading hypothesis: the supercap failed short. The schematic part is
+      a "1F 5.5V" radial supercap (Kitronik), typically two unbalanced
+      cells in series. Draining it to near 0 V through the boost converter
+      can reverse-charge the weaker cell.
+    - Not yet confirmed. The test: remove the cap and check whether its
+      pads charge to ~4.15 V, and whether the cap holds charge off-board.
+    - For the next revision: decide whether a series supercap should ever
+      be fully drained (cell balancing, or a cut-off before it does). In
+      firmware, consider shutting down once the spindown is done and the
+      supercap falls below about 2 V, rather than letting the boost drain
+      it. After the first cut the board ran 53 s past the spindown.
 
 ## Toolchain notes and gotchas
 
