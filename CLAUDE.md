@@ -108,6 +108,15 @@ or file I/O, and never block core 1.
   voice handshake. Keep `wav`, `mixer` and `ring_buffer` free of Arduino
   dependencies so they stay testable on the host.
 
+## USB identity
+
+The running firmware reports product "HDDSYNTH", manufacturer "HDD Synth"
+(`board_build.arduino.earlephilhower.usb_*` in platformio.ini). The VID/PID
+stay Raspberry Pi's 0x2E8A/0x000F so picotool and uploads work. The BOOTSEL
+drive name ("RP2350") and its USB strings come from the boot ROM; RP2350
+can white-label them via OTP (`USB_WHITE_LABEL`), but OTP is permanent, so
+only do it deliberately, per board, with the owner's say-so.
+
 ## Versioning
 
 SemVer, in `src/version.h` (`FIRMWARE_VERSION`). Bump it in the same commit

@@ -206,6 +206,10 @@ pio device monitor       # serial console, 115200
 After that, uploads reset the board into the bootloader automatically. The
 serial command `b` also does it.
 
+While the firmware runs, the board appears over USB as **HDDSYNTH** (by
+"HDD Synth"). The `RP2350` drive name in bootloader mode comes from the
+chip's boot ROM and doesn't change.
+
 **Back to CircuitPython:** same BOOT/RESET dance, then drag the CircuitPython
 UF2 back on. Your CIRCUITPY files are untouched by this firmware.
 
