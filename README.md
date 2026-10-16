@@ -35,11 +35,8 @@ Because only core 0 ever touches the SD card, the CircuitPython race cannot
 occur. An SD stall or read error just drains the ring while core 0 retries
 or re-initialises the card.
 
-- **Spinup, idle, access** stream from SD. The idle/access rings are filled
-  while spinup plays, so the handover is seamless.
-- **Spindown** is loaded into RAM at boot if it fits (leaving 32 KB spare).
-  Otherwise it streams from a ring that is kept pre-filled, so it starts
-  instantly either way.
+- **Samples:** only the spindown is held in RAM; everything else streams
+  from SD (see below).
 - **Power loss** comes from the eFuse FLT pin: an interrupt plus a 3 ms
   confirmation, instead of 50 ms+ polling.
 - **Safety:**
@@ -47,6 +44,44 @@ or re-initialises the card.
     advancing.
   - SD transfers are CRC-checked (`USE_SD_CRC=1`).
   - Level changes ramp over one 8 ms block, so there are no clicks.
+
+### Where each sound plays from
+
+| Sound | Plays from | Loaded |
+|---|---|---|
+| Idle | SD, streamed through its own 32 KB buffer (~1 s) | Buffer filled while the spinup plays, so RUN starts seamlessly; topped up continuously |
+| Access | SD, streamed through its own 32 KB buffer (~1 s) | As idle. It plays all the time; HDD activity only changes its volume |
+| Spinup | SD, streamed through a shared 32 KB "one-shot" buffer | At boot |
+| Jingle | SD, streamed through the one-shot buffer | First boot, before the spinup |
+| Spindown | **RAM**, the whole file, if it fits; otherwise SD through the one-shot buffer | When the pack loads (boot or pack change); the previous pack's copy is freed first |
+| Beeps | Neither: the audio core synthesises each sample as it plays | n/a |
+
+**Why the spindown is in RAM:** it plays while the power is failing,
+running off the supercap. From RAM it starts instantly and needs nothing
+else to keep working. Streaming would rely on the SD card reading reliably
+while the supply sags. The other sounds play with power present, and
+streaming them keeps RAM free for the spindown.
+
+**When it fits:** the spindown is loaded only if at least 32 KB of memory
+is still free afterwards (`HEAP_RESERVE_BYTES`, a margin for everything
+else). About 398 KB is free before it loads, so the largest spindown that
+fits is about 366 KB, roughly 11.4 s (16 kHz mono 16-bit is 32 KB per
+second). Every current pack fits; the largest, `PB_MicroScience612`
+(11.0 s), leaves 13 KB to spare. The boot log says which happened:
+`spindown in RAM (… ms)` or `spindown will stream from SD`.
+
+**If it doesn't fit:** once running, the one-shot buffer is kept
+pre-filled with the start of the spindown, so it still starts instantly on
+power loss and the rest streams while it plays. One weak spot: during the
+spinup and jingle that buffer is busy, so a power cut then has to fill it
+first (a short SD read before the spindown starts). No current pack is
+affected. `pio run -e mk5_stream_test` builds a variant that always
+streams the spindown, to test this path.
+
+**Memory overall:** the three 32 KB buffers (96 KB) and the rest of the
+firmware permanently use about 118 KB of the 512 KB, leaving the ~398 KB
+the spindown draws from. Features that add RAM shrink the space for big
+spindowns.
 
 ## SD card
 
