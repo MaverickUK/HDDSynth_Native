@@ -142,13 +142,16 @@ trigger the release workflow.
 
 ## Status and roadmap
 
-**Done (proof of concept, compiled and unit tested, NOT yet run on hardware):**
-streaming spinup/idle/access, spindown in RAM or a primed ring, power-loss
-spindown, watchdog, SD recovery, settings.json, activity input and LEDs,
-serial stats and stress test.
+**Done and run on hardware (2026-10-15):** the README's hardware test plan
+(steady state, stress, SD removal, simulated power loss, every pack on the
+test card) plus every feature below. Still open from it: real power cuts
+(one worked; then the supercap stopped charging, see known board issues)
+and `PB_MicroScience612` (not on the test card; predicted to fit in RAM). The test plan has since been removed from
+the README; its findings are in the git history and the known board issues
+above.
 
-**Next:** run the hardware test plan in the README and fix what it finds.
-The first thing to confirm is that the build boots on the RP2354A.
+**Settings:** every settings.json key is documented in the README table.
+Keep it in sync when adding or changing a key (`settings.cpp`).
 
 **New features (not in the Python firmware):**
 - `DEMO_MODE` (settings.json): cycle through every pack, 60 s each

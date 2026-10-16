@@ -1,6 +1,7 @@
 # Build the firmware and run the host-side tests on every push and pull
 # request. A tag vX.Y.Z also publishes a GitHub release with the UF2, after
-# checking that the tag matches FIRMWARE_VERSION in src/version.h.
+# checking that the tag matches FIRMWARE_VERSION in src/version.h. Releases
+# are full (not pre-release) so the newest shows as Latest on the repo page.
 name: Build and test
 
 on:
@@ -84,5 +85,4 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" "dist/hddsynth-mk5-${GITHUB_REF_NAME}.uf2" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
-            --generate-notes \
-            $(case "${GITHUB_REF_NAME}" in v0.*) echo --prerelease;; esac)
+            --generate-notes

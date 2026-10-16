@@ -2,11 +2,25 @@
 
 Native C++ firmware for the [HDD Synth](https://github.com/MaverickUK/HDDSynth) MK5 board (RP2354A), replacing the CircuitPython firmware. Licensed under GPLv3, like the HDD Synth software.
 
-## Status: proof of concept
+## Status
 
 A dual-core C++ firmware for the MK5 board (RP2354A), replacing the
-CircuitPython firmware. This proof of concept covers the risky core:
-SD streaming, mixing, spinup/spindown and power loss.
+CircuitPython firmware. It has passed hardware testing (steady state,
+stress, SD card removal, simulated power loss, every pack on the test card)
+and has feature parity with the CircuitPython firmware, plus a few extras.
+Real power-cut testing is unfinished: the first cut worked, then the test
+board's supercap stopped charging (a hardware issue, see CLAUDE.md).
+
+- SD-streamed spinup, idle and access; spindown from RAM (or SD if it is
+  too big); power-loss spindown from the supercap.
+- Rotary encoder volume / balance, action button (next pack, factory
+  reset), beeps with RGB LED flashes, saved pack choice, first-boot jingle,
+  `RANDOM_SAMPLE_PACK`.
+- New here: demo mode, a rainbow light show during the jingle, a
+  power-loss log on the SD card, and recovery from SD card removal without
+  a reboot.
+
+Not done: the OLED display (to be specified).
 
 ## Architecture
 
@@ -34,25 +48,79 @@ or re-initialises the card.
   - SD transfers are CRC-checked (`USE_SD_CRC=1`).
   - Level changes ramp over one 8 ms block, so there are no clicks.
 
-SD card layout and `settings.json` keys are the same as the CircuitPython
-version (`/samples/<pack>/{spinup,idle,access,spindown}.wav`). Add
-`"POWER_DETECTION": false` to run from USB only, with no power-loss detection.
+## SD card
 
-**Demo mode** (new in this firmware): add `"DEMO_MODE": true` to
-`settings.json`. Each pack then spins up, plays idle/access with simulated
-HDD activity for 60 seconds, plays its spindown, and hands over to the next
+```
+/settings.json            optional, see below
+/jingle.wav               optional, played once on first boot
+/samples/<pack>/spinup.wav
+/samples/<pack>/idle.wav
+/samples/<pack>/access.wav
+/samples/<pack>/spindown.wav
+/powerlog.bin             created by the firmware (power-loss log)
+```
+
+The layout and `settings.json` keys are the same as the CircuitPython
+firmware, so existing cards keep working. WAVs must be 16 kHz, mono,
+16-bit PCM. A pack is any folder in `/samples`; packs are used in
+alphabetical order.
+
+### settings.json
+
+Every key is optional; anything missing (or of the wrong type) keeps its
+default. For example:
+
+```json
+{
+    "SAMPLE_PACK": "Mark1",
+    "VOLUME_DEFAULT": 0.9,
+    "BALANCE_DEFAULT": 0.2,
+    "ACCESS_HOLD_TIME_MS": 500,
+    "ACTIVITY_LED_COLOUR": "#00FF00"
+}
+```
+
+| Key | Default | What it does |
+|---|---|---|
+| `SAMPLE_PACK` | *(none)* | Pack to play (a folder name in `/samples`). Wins over the pack chosen with the action button. If it doesn't exist, the firmware beeps 5 times and carries on with another pack. |
+| `RANDOM_SAMPLE_PACK` | `false` | Pick a random pack at every boot, never the same one twice running. Overrides `SAMPLE_PACK`. |
+| `VOLUME_DEFAULT` | `0.5` | Starting volume, 0.0 to 1.0. The encoder changes it from there (not saved). |
+| `BALANCE_DEFAULT` | `0.5` | Starting idle/access mix: 0.0 = idle only, 1.0 = access only. |
+| `PLAY_SPINUP` | `true` | Play the spinup at boot. |
+| `PLAY_IDLE` | `true` | Play the idle loop. |
+| `PLAY_SPINDOWN` | `true` | Play the spindown on power loss. |
+| `ACCESS_HOLD_TIME_MS` | `100` | How long the access sound keeps playing after the HDD activity signal stops. |
+| `SIMULATION_MODE` | `false` | Fake random HDD activity instead of reading the activity input. |
+| `POWER_DETECTION` | `true` | Watch the eFuse for power loss. Set `false` to run from USB with no power-loss detection. |
+| `ACTIVITY_LED_ENABLED` | `true` | Light the RGB LED on HDD activity. |
+| `ACTIVITY_LED_COLOUR` | `"#00FF00"` | Activity LED colour, as `"#RRGGBB"` or `[r, g, b]` (0-255 each). |
+| `RGB_LED_BRIGHTNESS` | `0.5` | Overall RGB LED brightness, 0.0 to 1.0 (applies to beeps and the jingle show too). |
+| `ALWAYS_PLAY_JINGLE` | `false` | Play `/jingle.wav` at every boot, not just the first. *(New: a code constant in CircuitPython.)* |
+| `DEMO_MODE` | `false` | Demo mode, see below. *(New.)* |
+
+**Demo mode:** each pack spins up, plays idle/access with simulated HDD
+activity for 60 seconds, plays its spindown, and hands over to the next
 pack, looping forever. Each pack gets a random activity LED colour. A short
 press of the action button skips to the next pack. Demo pack changes are
 not saved, so after a power cut it starts again from the usual pack.
 
-Not in this proof of concept yet: rotary encoder, action button / pack
-switching, beeps, NVM persistence, jingle, OLED.
+## Controls
+
+- **Rotary encoder:** turn for volume (5% steps); press to switch to balance
+  (10% steps) and back. 2 beeps = volume mode, 3 beeps = balance mode.
+- **Action button:** short press (under 1 s) = next sample pack, remembered
+  across power cycles. Hold 3 s = factory reset: forgets the chosen pack and
+  the jingle flag, then reboots.
+- **Error beeps** (low pitch, red LED): 1 = no SD card, 2 = no packs,
+  4 = broken pack, 5 = `SAMPLE_PACK` not found. For the fatal ones the red
+  LED keeps repeating the pattern.
 
 ## Build and flash
 
-**Ready-made UF2s:** every push is built by GitHub Actions (download the
-UF2 from the run's artifacts), and each `vX.Y.Z` tag publishes a release
-with `hddsynth-mk5-vX.Y.Z.uf2`.
+**Ready-made UF2s:** download `hddsynth-mk5-vX.Y.Z.uf2` from the
+[latest release](https://github.com/MaverickUK/HDDSynth_Native/releases/latest).
+GitHub Actions builds every push (the UF2 is in the run's artifacts) and
+publishes a release for every `vX.Y.Z` tag.
 
 To build it yourself, one-time setup: VS Code + the PlatformIO extension (or `pip install platformio`).
 
@@ -83,8 +151,7 @@ release commit is tagged `vX.Y.Z`.
 - **MINOR:** new features that stay backwards compatible.
 - **PATCH:** bug fixes only.
 
-While the version is `0.y.z` (proof of concept), anything may change between
-minor versions.
+While the version is `0.y.z`, anything may change between minor versions.
 
 ### Unit tests (run on your Mac, no hardware)
 
@@ -96,6 +163,10 @@ Covers:
 - WAV parsing, including every file in the sample pack repo.
 - The ring buffer and the mixer, under AddressSanitizer/UBSan.
 - Two-thread producer/consumer tests that mirror core 0 and core 1.
+- Beep synthesis, encoder decoding, button timing, the saved-state and
+  power-log formats, and the jingle light show's level follower.
+
+GitHub Actions runs them on every push.
 
 ## Serial console
 
@@ -131,41 +202,21 @@ Stats lines look like:
 - `i2s_underflow` means the audio core itself fell behind. It should never
   happen.
 
-## Hardware test plan
+## Power-loss log
 
-Run these in order and send me the serial log from each.
+A real power cut takes USB down with it, so the serial console can't see
+what happens. From the moment power loss is detected, the power lines and
+supercap readings are also written to `/powerlog.bin` on the SD card (raw
+sector writes into a preallocated file, flushed every 250 ms, so a sudden
+death can at worst lose the last chunk). After power returns, send `l` to
+print it: the spindown at 100 ms resolution, then the supercap every 500 ms
+until power returns or the board dies. Only the latest power loss is kept.
 
-1. **Boot and listen.** Power from USB with `"POWER_DETECTION": false`.
-   Expect `[boot]` lines, spinup, then `[run] idle/access looping`. Press
-   `a` for simulated activity and check the access overlay and RGB LED.
-2. **Steady state, 10 minutes.** `under=0`, `i2s_underflow=0`,
-   `read_err=0`. Note the `min_ring` and `max_read` values.
-3. **Stress test, 10+ minutes.** Press `t`. This repeats the exact operation
-   that froze CircuitPython: restarting SD-streamed voices while others play,
-   several times a second. Expect thousands of transitions, `failures=0`,
-   `under=0` and no freeze. It sounds choppy by design.
-4. **SD abuse.** During the stress test, briefly pull the SD card and
-   reinsert it. Expect `read_err` and `recoveries` to increase and playback
-   to resume, with no hang. If it can't recover, the watchdog should reboot
-   the board rather than freeze.
-5. **Simulated power loss.** Press `p`. Spindown should play fully, with
-   `[trace] spindown` lines every 100 ms, then the amp switches off.
-6. **Real power cuts** (in the PC, or with power detection enabled), 20+
-   cycles, including some within 30 s of boot (a partly charged supercap).
-   Every cut should produce a spindown. The `[trace]` lines give the
-   supercap curve during spinup and spindown, which is the data for the
-   earlier hardware questions.
-
-   A real cut takes USB down with it, so the console can't see it. From the
-   moment power loss is detected, the power lines and traces are also
-   written to `/powerlog.bin` on the SD card (raw sector writes into a
-   preallocated file, flushed every 250 ms). After power returns, send `l`
-   to print that session: spindown at 100 ms resolution, then the
-   supercap every 500 ms until power returns or the board dies. Only the
-   latest power loss is kept.
-7. **Each sample pack**, especially `PB_MicroScience612`. Its 345 KB
-   spindown may not fit in RAM: check whether the log says "spindown in RAM"
-   or "will stream from SD", and that both work.
+## Development notes
 
 `WAIT_FOR_SERIAL_MS=1500` in `platformio.ini` delays boot by up to 1.5 s so
 the console can attach. Remove it for normal use.
+
+`pio run -e mk5_stream_test` builds a test variant that always streams the
+spindown from SD (no current pack is too big for RAM, so that path is
+otherwise never used).
