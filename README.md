@@ -107,13 +107,43 @@ not saved, so after a power cut it starts again from the usual pack.
 ## Controls
 
 - **Rotary encoder:** turn for volume (5% steps); press to switch to balance
-  (10% steps) and back. 2 beeps = volume mode, 3 beeps = balance mode.
+  (10% steps) and back.
 - **Action button:** short press (under 1 s) = next sample pack, remembered
   across power cycles. Hold 3 s = factory reset: forgets the chosen pack and
-  the jingle flag, then reboots.
-- **Error beeps** (low pitch, red LED): 1 = no SD card, 2 = no packs,
-  4 = broken pack, 5 = `SAMPLE_PACK` not found. For the fatal ones the red
-  LED keeps repeating the pattern.
+  the jingle flag, then reboots. A press between 1 and 3 s does nothing.
+
+## Lights and beeps
+
+The RGB LED flashes in time with each beep: **blue** for something you
+did, **red** for an error. Operation beeps are high-pitched, error beeps
+low.
+
+| Beeps | LED | Meaning |
+|---|---|---|
+| 2 short, high | 2 blue flashes | Encoder now adjusts **volume** |
+| 3 short, high | 3 blue flashes | Encoder now adjusts **balance** |
+| 1 short, high | 1 blue flash | Changing to the next sample pack |
+| 1 long (1 s), high | 1 long blue flash | Factory reset, then a reboot |
+| 1 low | red, repeating | **No SD card** (or it can't be read). Halted. |
+| 2 low | red, repeating | **No sample packs** in `/samples`. Halted. |
+| 4 low | red, repeating | **Broken pack**: `idle.wav`/`access.wav` missing or not 16 kHz mono 16-bit. Halted. Holding the action button 3 s (factory reset) forgets a saved broken pack. |
+| 5 low | 5 red flashes, once | `SAMPLE_PACK` in settings.json **not found**. A warning: it carries on with another pack. |
+
+"Halted" errors keep repeating their flash pattern on the red LED every
+4 seconds, so a unit with no speaker attached still says what's wrong.
+Beeps play at a fixed level, whatever the volume is set to.
+
+The rest of the time the RGB LED shows:
+
+| LED | When |
+|---|---|
+| Activity colour (default green, `ACTIVITY_LED_COLOUR`) | HDD activity, real or simulated. Off when idle. `ACTIVITY_LED_ENABLED: false` turns this off. |
+| A random colour per pack | HDD activity in demo mode. |
+| Rainbow, pulsing with the sound | While the jingle plays. |
+| Off | During the spindown, and once power is lost. |
+
+`RGB_LED_BRIGHTNESS` scales all of these. The separate external HDD LED
+output (GP17) also lights on HDD activity.
 
 ## Build and flash
 
