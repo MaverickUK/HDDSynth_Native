@@ -144,9 +144,9 @@ trigger the release workflow.
 
 **Done and run on hardware (2026-10-15):** the README's hardware test plan
 (steady state, stress, SD removal, simulated power loss, every pack on the
-test card) plus every feature below. Still open from it: real power cuts
-(one worked; then the supercap stopped charging, see known board issues)
-and `PB_MicroScience612` (not on the test card; predicted to fit in RAM). The test plan has since been removed from
+test card: 8 packs; not yet `Mark_Original` or `PB_IBM_Ultrastar`) plus every feature
+below. Still open from it: real power cuts (one worked; then the supercap
+stopped charging, see known board issues). The test plan has since been removed from
 the README; its findings are in the git history and the known board issues
 above.
 
@@ -194,5 +194,8 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
 **Open questions:**
 - Exact supercap part, and spindown energy margin at high volume. Use the
   `[trace]` logs.
-- Whether `PB_MicroScience612`'s 345 KB spindown fits in RAM alongside
-  everything else.
+- ~~Whether `PB_MicroScience612`'s spindown fits in RAM~~: yes, tested
+  2026-10-16 (v0.9.0). Its 11 s spindown loads into RAM leaving 45 KB free,
+  13 KB above `HEAP_RESERVE_BYTES`; it passed a 60 s stress test. **RAM
+  budget:** a new feature that uses more than ~13 KB of RAM pushes this
+  pack's spindown onto the streamed fallback (works, but check it).
