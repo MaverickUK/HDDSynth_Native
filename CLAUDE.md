@@ -177,9 +177,13 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
 - [x] NVM persistence: desired pack and jingle flag (`persist.*`). Flash
       writes pause core 1, so only write with the audio stopped and the amp
       muted (e.g. on a pack change).
-- **Decided against:** saving volume/balance (`persisted_float.py`, off by
-  default in Python). The write would happen while idle/access play, and
-  pausing core 1 risks an audible glitch (owner's decision, 2026-10-15).
+- [x] Saving volume/balance (`SAVE_VOLUME_BALANCE`, opt-in; `saved_levels.*`,
+      `levels_format.*`). Stored on the **SD card** (`/state.bin`, two
+      CRC'd slots), not flash: a flash write pauses core 1 for ~40 ms while
+      idle/access play. 2 s debounce. `VOLUME_DEFAULT`/`BALANCE_DEFAULT` in
+      settings.json override saved values. Factory reset clears them, even
+      with saving off. (Originally declined over the flash glitch; added
+      2026-10-16 once SD storage avoided it.)
 - [x] Jingle on first boot (`/jingle.wav`, full volume, `JINGLE` state before
       spinup; `ALWAYS_PLAY_JINGLE` is a settings.json key here);
       `RANDOM_SAMPLE_PACK` (avoids the previous pack, saves its choice).

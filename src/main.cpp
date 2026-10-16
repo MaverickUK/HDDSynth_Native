@@ -21,6 +21,7 @@
 #include "persist.h"
 #include "power.h"
 #include "powerlog.h"
+#include "saved_levels.h"
 #include "sd_streamer.h"
 #include "settings.h"
 #include "version.h"
@@ -295,7 +296,7 @@ void handleSerial() {
             case 'h':
                 Serial.println("firmware v" FIRMWARE_VERSION);
                 Serial.println("h help | s stats | t stress on/off | p simulate power loss | "
-                               "a toggle simulated activity | + / - volume | n next pack | k beep test | l power log | d list SD root | m demo mode | j replay jingle | r reboot | b bootloader");
+                               "a toggle simulated activity | + / - volume | > / < balance | n next pack | k beep test | l power log | d list SD root | m demo mode | j replay jingle | r reboot | b bootloader");
                 break;
             case 's': printStats(); break;
             case 't':
@@ -320,6 +321,10 @@ void handleSerial() {
             case '+':
             case '-':
                 controls::adjustVolume(c == '+' ? 1 : -1);
+                break;
+            case '>':
+            case '<':
+                controls::adjustBalance(c == '>' ? 1 : -1);
                 break;
             case 'n':
                 if (state == State::Run) changePack();
@@ -477,6 +482,7 @@ void factoryReset() {
     stopPackVoices();
     beepAndWait(beeps::Type::FactoryReset);
     io::ampOff();
+    savedlevels::clear();
     persist::state() = PersistedState{};
     persist::commit();
     Serial.flush();
@@ -538,6 +544,7 @@ void boot() {
     power::begin(settings.powerDetection);
     powerlog::begin();
     persist::begin();
+    savedlevels::begin(settings);  // before anything uses the volume
 
     // Which pack: RANDOM_SAMPLE_PACK, else SAMPLE_PACK in settings.json (as in
     // the CircuitPython firmware), then the one last chosen with the action
@@ -718,6 +725,7 @@ void loop() {
 
         case State::Jingle:
             sd::pump();
+            savedlevels::service();
             controls::poll();  // volume changes apply from the spinup on; the jingle is pinned at full
             beeps::service();
             jingleLights();
@@ -727,6 +735,7 @@ void loop() {
 
         case State::Spinup:
             sd::pump();
+            savedlevels::service();
             controls::poll();  // pack changes wait for RUN; volume applies straight away
             audio::setLevel(VOICE_SPINUP, levelFromFloat(settings.volume));
             beeps::service();
@@ -737,6 +746,7 @@ void loop() {
 
         case State::Run: {
             sd::pump();
+            savedlevels::service();
             const controls::Action action = controls::poll();
             if (power::lost()) enterSpindown();
             else if (action == controls::Action::NextPack) settings.demoMode ? enterDemoSpindown() : changePack();
@@ -748,6 +758,7 @@ void loop() {
 
         case State::DemoSpindown: {
             sd::pump();
+            savedlevels::service();
             const controls::Action action = controls::poll();
             beeps::service();
             audio::setLevel(VOICE_SPINDOWN, levelFromFloat(settings.volume));

@@ -13,6 +13,9 @@ struct Settings {
     uint32_t accessHoldMs = 100;
     float volume = 0.5f;
     float balance = 0.5f;
+    bool volumeFromConfig = false;   // VOLUME_DEFAULT was in settings.json (wins over a saved value)
+    bool balanceFromConfig = false;  // BALANCE_DEFAULT likewise
+    bool saveVolumeBalance = false;  // SAVE_VOLUME_BALANCE: remember manual changes (on the SD card)
     bool activityLedEnabled = true;
     uint8_t activityLedColour[3] = {0, 255, 0};
     float rgbBrightness = 0.5f;

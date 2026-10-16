@@ -59,6 +59,9 @@ constexpr uint32_t ACTION_LONG_PRESS_MS      = 3000;  // ACTION_BUTTON_LONG_PRES
 constexpr uint32_t JINGLE_RAINBOW_MS   = 1500;  // one trip round the colour wheel
 constexpr uint32_t JINGLE_LIGHT_STEP_MS = 10;   // LED update interval
 
+// ---- Saved volume/balance ----
+constexpr uint32_t SAVE_LEVELS_DEBOUNCE_MS = 2000;  // save this long after the last change
+
 // ---- Demo mode ----
 constexpr uint32_t DEMO_PACK_MS = 60000;  // how long each pack plays before spinning down
 

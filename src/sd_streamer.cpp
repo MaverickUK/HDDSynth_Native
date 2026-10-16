@@ -329,6 +329,8 @@ bool nextPackName(const char* after, char* out, size_t outLen) {
     return out[0] != 0;
 }
 
+bool fileExists(const char* path) { return mounted && card.exists(path); }
+
 bool packExists(const char* name) {
     if (!mounted || !name || !name[0]) return false;
     char path[128];

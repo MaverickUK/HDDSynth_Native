@@ -23,6 +23,7 @@
 #include "colour.h"
 #include "crc32.h"
 #include "level_follower.h"
+#include "levels_format.h"
 #include "persist_format.h"
 #include "powerlog_format.h"
 #include "quadrature.h"
@@ -705,6 +706,68 @@ TEST(level_follower_auto_gain_lifts_quiet_audio) {
     CHECK(half > 0.15f && half < 0.5f);
 }
 
+
+// ---- saved volume/balance -----------------------------------------------------
+
+TEST(levels_record_round_trip_and_corruption) {
+    uint8_t sec[levels::SECTOR_BYTES];
+    levels::Record in;
+    in.seq = 41; in.volumePct = 85; in.balancePct = 30;
+    levels::encode(in, sec);
+    levels::Record out;
+    CHECK(levels::decode(sec, out));
+    CHECK(out.seq == 41 && out.volumePct == 85 && out.balancePct == 30);
+    sec[12] ^= 0x01;  // torn / corrupt
+    CHECK(!levels::decode(sec, out));
+    std::memset(sec, 0, sizeof(sec));  // blank file
+    CHECK(!levels::decode(sec, out));
+    in.volumePct = levels::NOT_SAVED;  // cleared by a factory reset
+    levels::encode(in, sec);
+    CHECK(levels::decode(sec, out) && out.volumePct == levels::NOT_SAVED);
+}
+
+TEST(levels_newest_slot_wins) {
+    uint8_t a[levels::SECTOR_BYTES], b[levels::SECTOR_BYTES];
+    levels::Record ra, rb, out;
+    ra.seq = 7; ra.volumePct = 10;
+    rb.seq = 8; rb.volumePct = 20;
+    levels::encode(ra, a);
+    levels::encode(rb, b);
+    CHECK(levels::newest(a, b, out) && out.volumePct == 20);
+    CHECK(levels::newest(b, a, out) && out.volumePct == 20);
+    b[0] ^= 0xFF;  // power died writing slot B: slot A's older value survives
+    CHECK(levels::newest(a, b, out) && out.volumePct == 10);
+    ra.seq = 0xFFFFFFFFu; rb.seq = 0;  // sequence wraparound: 0 is newer
+    levels::encode(ra, a);
+    levels::encode(rb, b);
+    CHECK(levels::newest(a, b, out) && out.volumePct == 20);
+    std::memset(a, 0, sizeof(a));
+    std::memset(b, 0, sizeof(b));
+    CHECK(!levels::newest(a, b, out));
+}
+
+TEST(levels_saver_debounces_two_seconds) {
+    levels::Saver sv(2000);
+    sv.baseline(50, 50);
+    CHECK(!sv.update(50, 50, 0));         // nothing changed
+    CHECK(!sv.update(55, 50, 100));       // turned: wait
+    CHECK(!sv.update(60, 50, 1500));      // turned again: timer restarts
+    CHECK(!sv.update(60, 50, 3400));      // 1.9 s since the last change
+    CHECK(sv.update(60, 50, 3500));       // 2 s: save
+    sv.saved();
+    CHECK(!sv.update(60, 50, 9000));      // saved: nothing more to do
+    // Turned and turned back before the debounce: no write needed.
+    CHECK(!sv.update(65, 50, 10000));
+    CHECK(!sv.update(60, 50, 10500));
+    CHECK(!sv.update(60, 50, 13000));
+    // A failed write retries after another debounce.
+    CHECK(!sv.update(60, 70, 20000));
+    CHECK(sv.update(60, 70, 22000));
+    sv.failed(22000);
+    CHECK(!sv.update(60, 70, 23000));
+    CHECK(sv.update(60, 70, 24000));
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -738,6 +801,9 @@ int main(int argc, char** argv) {
     RUN(level_follower_silence_is_floor);
     RUN(level_follower_fast_attack_slow_release);
     RUN(level_follower_auto_gain_lifts_quiet_audio);
+    RUN(levels_record_round_trip_and_corruption);
+    RUN(levels_newest_slot_wins);
+    RUN(levels_saver_debounces_two_seconds);
     RUN(ring_wraparound);
     RUN(ring_two_threads);
     RUN(mixer_unity_passthrough_and_end);

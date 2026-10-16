@@ -93,6 +93,7 @@ spindowns.
 /samples/<pack>/access.wav
 /samples/<pack>/spindown.wav
 /powerlog.bin             created by the firmware (power-loss log)
+/state.bin                created by the firmware (saved volume/balance)
 ```
 
 The layout and `settings.json` keys are the same as the CircuitPython
@@ -119,8 +120,9 @@ default. For example:
 |---|---|---|
 | `SAMPLE_PACK` | *(none)* | Pack to play (a folder name in `/samples`). Wins over the pack chosen with the action button. If it doesn't exist, the firmware beeps 5 times and carries on with another pack. |
 | `RANDOM_SAMPLE_PACK` | `false` | Pick a random pack at every boot, never the same one twice running. Overrides `SAMPLE_PACK`. |
-| `VOLUME_DEFAULT` | `0.5` | Starting volume, 0.0 to 1.0. The encoder changes it from there (not saved). |
-| `BALANCE_DEFAULT` | `0.5` | Starting idle/access mix: 0.0 = idle only, 1.0 = access only. |
+| `VOLUME_DEFAULT` | `0.5` | Starting volume, 0.0 to 1.0. If set, it is used at every boot, even over a saved volume. |
+| `BALANCE_DEFAULT` | `0.5` | Starting idle/access mix: 0.0 = idle only, 1.0 = access only. If set, it is used at every boot, even over a saved balance. |
+| `SAVE_VOLUME_BALANCE` | `false` | Remember the volume and balance when you change them (2 s after the last change), and use them at the next boot unless `VOLUME_DEFAULT`/`BALANCE_DEFAULT` is set. Saved on the SD card in `/state.bin`, so they go with the card. A factory reset clears them. *(New.)* |
 | `PLAY_SPINUP` | `true` | Play the spinup at boot. |
 | `PLAY_IDLE` | `true` | Play the idle loop. |
 | `PLAY_SPINDOWN` | `true` | Play the spindown on power loss. |
@@ -142,10 +144,11 @@ not saved, so after a power cut it starts again from the usual pack.
 ## Controls
 
 - **Rotary encoder:** turn for volume (5% steps); press to switch to balance
-  (10% steps) and back.
+  (10% steps) and back. Remembered across power cycles only with
+  `SAVE_VOLUME_BALANCE`.
 - **Action button:** short press (under 1 s) = next sample pack, remembered
-  across power cycles. Hold 3 s = factory reset: forgets the chosen pack and
-  the jingle flag, then reboots. A press between 1 and 3 s does nothing.
+  across power cycles. Hold 3 s = factory reset: forgets the chosen pack,
+  the jingle flag and the saved volume/balance, then reboots. A press between 1 and 3 s does nothing.
 
 ## Lights and beeps
 
@@ -242,6 +245,7 @@ t  stress test on/off: restarts streamed voices every 30-250 ms
 p  simulate power loss (runs the spindown path)
 a  toggle simulated HDD activity
 +  / -  volume
+>  / <  balance (towards access / towards idle)
 n  next sample pack (same as a short press of the action button; remembered)
 l  print the log of the last power loss (kept on the SD card)
 k  play the next beep profile (to audition them)

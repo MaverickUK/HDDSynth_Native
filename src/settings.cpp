@@ -42,8 +42,15 @@ bool parseSettingsJson(const char* json, Settings& s) {
     if (doc["PLAY_IDLE"].is<bool>()) s.playIdle = doc["PLAY_IDLE"];
     if (doc["POWER_DETECTION"].is<bool>()) s.powerDetection = doc["POWER_DETECTION"];
     if (doc["ACCESS_HOLD_TIME_MS"].is<int>()) s.accessHoldMs = doc["ACCESS_HOLD_TIME_MS"].as<int>();
-    if (doc["VOLUME_DEFAULT"].is<float>()) s.volume = clamp01(doc["VOLUME_DEFAULT"]);
-    if (doc["BALANCE_DEFAULT"].is<float>()) s.balance = clamp01(doc["BALANCE_DEFAULT"]);
+    if (doc["VOLUME_DEFAULT"].is<float>()) {
+        s.volume = clamp01(doc["VOLUME_DEFAULT"]);
+        s.volumeFromConfig = true;
+    }
+    if (doc["BALANCE_DEFAULT"].is<float>()) {
+        s.balance = clamp01(doc["BALANCE_DEFAULT"]);
+        s.balanceFromConfig = true;
+    }
+    if (doc["SAVE_VOLUME_BALANCE"].is<bool>()) s.saveVolumeBalance = doc["SAVE_VOLUME_BALANCE"];
     if (doc["ACTIVITY_LED_ENABLED"].is<bool>()) s.activityLedEnabled = doc["ACTIVITY_LED_ENABLED"];
     if (doc["RGB_LED_BRIGHTNESS"].is<float>()) s.rgbBrightness = clamp01(doc["RGB_LED_BRIGHTNESS"]);
     parseColour(doc["ACTIVITY_LED_COLOUR"], s.activityLedColour);
@@ -58,8 +65,8 @@ bool parseSettingsJson(const char* json, Settings& s) {
 
 void printSettings(const Settings& s) {
     Serial.printf("[settings] pack='%s' volume=%d%% balance=%d%% sim=%d spinup=%d spindown=%d idle=%d "
-                  "hold=%lums power_detect=%d random_pack=%d always_jingle=%d demo=%d\n",
+                  "hold=%lums power_detect=%d random_pack=%d always_jingle=%d demo=%d save_levels=%d\n",
                   s.samplePack, static_cast<int>(s.volume * 100 + 0.5f), static_cast<int>(s.balance * 100 + 0.5f), s.simulationMode, s.playSpinup, s.playSpindown,
                   s.playIdle, static_cast<unsigned long>(s.accessHoldMs), s.powerDetection, s.randomSamplePack,
-                  s.alwaysPlayJingle, s.demoMode);
+                  s.alwaysPlayJingle, s.demoMode, s.saveVolumeBalance);
 }
