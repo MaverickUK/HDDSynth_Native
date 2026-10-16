@@ -525,6 +525,9 @@ const char* resetReasonName() {
 void boot() {
     Serial.println("\n[boot] HDD Synth MK5 C++ firmware v" FIRMWARE_VERSION " (proof of concept)");
     Serial.printf("[boot] reset reason: %s\n", resetReasonName());
+#if WAIT_FOR_SERIAL_MS > 0
+    Serial.printf("[boot] debug build (USB upload): waited up to %d ms for the serial console\n", WAIT_FOR_SERIAL_MS);
+#endif
     io::begin(settings);  // amp off, LEDs off before anything else
 
     if (!sd::begin()) {

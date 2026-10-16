@@ -287,8 +287,11 @@ until power returns or the board dies. Only the latest power loss is kept.
 
 ## Development notes
 
-`WAIT_FOR_SERIAL_MS=1500` in `platformio.ini` delays boot by up to 1.5 s so
-the console can attach. Remove it for normal use.
+**Boot wait (debug only):** when you upload over USB (`pio run -t upload`,
+or VS Code's Upload), the firmware waits up to 1.5 s at boot for the serial
+console to attach, so you see the boot log; the log says
+`debug build (USB upload)`. Every other build, including the GitHub release
+UF2s, boots straight away. This is done by `scripts/serial_wait.py`.
 
 `pio run -e mk5_stream_test` builds a test variant that always streams the
 spindown from SD (no current pack is too big for RAM, so that path is

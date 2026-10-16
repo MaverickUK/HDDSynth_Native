@@ -198,7 +198,9 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
       `RANDOM_SAMPLE_PACK` (avoids the previous pack, saves its choice).
       RANDOM_SAMPLE_PACK is not yet tried on hardware.
 - [ ] OLED (I2C on GP24/25): parked until it is specified (owner, 2026-10-15)
-- [ ] Remove `WAIT_FOR_SERIAL_MS` for release builds
+- [x] `WAIT_FOR_SERIAL_MS` (1.5 s boot wait for the console) only in USB
+      uploads: `scripts/serial_wait.py` adds it to project sources when the
+      `upload` target is used. CI and release UF2s don't wait.
 - [x] GitHub Actions (`.github/workflows/build.yml`): builds both envs and
       runs the native tests against the sample packs on every push/PR; a
       `vX.Y.Z` tag must match `FIRMWARE_VERSION` and publishes a release
