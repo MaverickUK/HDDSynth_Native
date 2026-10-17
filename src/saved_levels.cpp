@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 #include "config.h"
+#include "console.h"
 #include "levels_format.h"
 #include "sd_streamer.h"
 
@@ -51,7 +52,7 @@ void begin(Settings& s) {
     ready = false;
     if (!s.saveVolumeBalance) return;
     if (!open()) {
-        Serial.println("[levels] cannot reserve /state.bin, not saving volume/balance");
+        Console.println("[levels] cannot reserve /state.bin, not saving volume/balance");
         return;
     }
     ready = true;
@@ -59,7 +60,7 @@ void begin(Settings& s) {
     // settings.json wins over a saved value, key by key.
     if (current.volumePct != levels::NOT_SAVED && !s.volumeFromConfig) s.volume = current.volumePct / 100.0f;
     if (current.balancePct != levels::NOT_SAVED && !s.balanceFromConfig) s.balance = current.balancePct / 100.0f;
-    Serial.printf("[levels] saving on; volume %d%% (%s), balance %d%% (%s)\n", toPct(s.volume),
+    Console.printf("[levels] saving on; volume %d%% (%s), balance %d%% (%s)\n", toPct(s.volume),
                   s.volumeFromConfig ? "settings.json" : current.volumePct != levels::NOT_SAVED ? "saved" : "default",
                   toPct(s.balance),
                   s.balanceFromConfig ? "settings.json" : current.balancePct != levels::NOT_SAVED ? "saved" : "default");
@@ -73,7 +74,7 @@ void service() {
     if (!saver.update(v, b, now)) return;
     if (write(v, b)) {
         saver.saved();
-        Serial.printf("[levels] saved volume %d%%, balance %d%%\n", v, b);
+        Console.printf("[levels] saved volume %d%%, balance %d%%\n", v, b);
     } else {
         saver.failed(now);  // card out or busy: try again after another debounce
     }
@@ -83,7 +84,7 @@ void clear() {
     // Also when saving is off, so turning it back on later can't bring old
     // values back. Without an existing file there is nothing to clear.
     if (!ready && (!sd::fileExists(PATH) || !open())) return;
-    if (write(levels::NOT_SAVED, levels::NOT_SAVED)) Serial.println("[levels] saved volume/balance cleared");
+    if (write(levels::NOT_SAVED, levels::NOT_SAVED)) Console.println("[levels] saved volume/balance cleared");
 }
 
 } // namespace savedlevels

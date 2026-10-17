@@ -8,6 +8,7 @@
 // n next sample pack, k play the next beep profile, l print the last power-loss log,
 // r reboot, b reboot to USB bootloader.
 #include <Arduino.h>
+#include <hardware/clocks.h>
 
 #include <initializer_list>
 
@@ -15,9 +16,11 @@
 #include "beeps.h"
 #include "colour.h"
 #include "config.h"
+#include "console.h"
 #include "controls.h"
 #include "io.h"
 #include "level_follower.h"
+#include "oled.h"
 #include "persist.h"
 #include "power.h"
 #include "powerlog.h"
@@ -89,6 +92,7 @@ uint32_t stressFailures = 0;
 uint32_t lastHeartbeat = 0;
 uint32_t lastHeartbeatChangeMs = 0;
 bool core1Stalled = false;
+bool lowPower = false;  // core 1 deliberately parked after the spindown
 
 uint32_t nextStatsMs = 0;
 uint32_t demoEndsMs = 0;  // DEMO_MODE: when the current pack spins down
@@ -112,6 +116,7 @@ void feedWatchdog() {
 }
 
 void checkCore1() {
+    if (lowPower) return;  // parked on purpose: a still heartbeat isn't a hang
     const uint32_t hb = audio::heartbeat();
     const uint32_t now = millis();
     if (hb != lastHeartbeat) {
@@ -119,7 +124,7 @@ void checkCore1() {
         lastHeartbeatChangeMs = now;
     } else if (!core1Stalled && now - lastHeartbeatChangeMs > cfg::CORE1_STALL_MS) {
         core1Stalled = true;  // stop feeding: the watchdog resets us
-        Serial.println("[fatal] audio core stalled, letting watchdog reset");
+        Console.println("[fatal] audio core stalled, letting watchdog reset");
     }
 }
 
@@ -144,7 +149,7 @@ void beepAndWait(beeps::Type t) {
 // Fatal: beep the error once, then repeat its pattern on the red LED
 // (_halt_on_boot_error() in the CircuitPython firmware).
 void halt(const char* why, beeps::Type error) {
-    Serial.printf("[fatal] %s\n", why);
+    Console.printf("[fatal] %s\n", why);
     for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SPINDOWN}) audio::stop(id);
     beepAndWait(error);
     io::ampOff();
@@ -163,6 +168,24 @@ void powerTrace(const char* tag, uint32_t intervalMs = 100) {
 // Called by power::waitForRestore() every 100 ms after spindown, until power
 // returns or the supercap runs out. The slower trace here is the "how long
 // does the board survive" curve; the power log keeps it if we never return.
+// After the spindown, while waiting on the supercap for power to return.
+// The first real cut drew ~130 mW here, mostly core 1 mixing silence at
+// 150 MHz; this cuts it to a fraction, so short outages are ridden out and
+// the supercap drains far more gently. One-way: the exit is a reboot.
+void enterLowPower() {
+    for (sd::Stream* s : {&streamSpinup, &streamIdle, &streamAccess, &streamSpindown}) sd::closeStream(*s);
+    io::ledsOffForLowPower();
+    lowPower = true;
+    const bool parked = audio::shutdownForLowPower();
+    // Only change the clock once core 1 has stopped I2S (PIO and DMA run
+    // from clk_sys). set_sys_clock_48mhz() runs clk_sys from PLL_USB and
+    // turns PLL_SYS off; USB, the ADC, the timer and the watchdog have their
+    // own clocks, and SPI to the SD card just runs slower.
+    if (parked) set_sys_clock_48mhz();
+    powerlog::logf("[power] low-power wait: core 1 %s, clk_sys %lu MHz", parked ? "parked" : "NOT parked",
+                   static_cast<unsigned long>(clock_get_hz(clk_sys) / 1000000));
+}
+
 void waitPowerIdle() {
     feedWatchdog();
     powerTrace("off", 500);
@@ -208,21 +231,21 @@ bool restartLoop(VoiceId id, sd::Stream& s, uint16_t level) {
 void printVoice(const char* name, VoiceId id) {
     Voice& v = audio::voice(id);
     const uint32_t minFill = v.minRingFill.load();
-    Serial.printf(" | %s: %s under=%lu min_ring=", name, audio::isPlaying(id) ? "on" : "off",
+    Console.printf(" | %s: %s under=%lu min_ring=", name, audio::isPlaying(id) ? "on" : "off",
                   static_cast<unsigned long>(v.underrunSamples.load()));
-    if (minFill == 0xFFFFFFFF) Serial.print("-");
-    else Serial.printf("%lums", static_cast<unsigned long>(samplesToMs(minFill)));
+    if (minFill == 0xFFFFFFFF) Console.print("-");
+    else Console.printf("%lums", static_cast<unsigned long>(samplesToMs(minFill)));
 }
 
 void printStats() {
     sd::Stats& st = sd::stats();
-    Serial.printf("[stats] t=%lus state=%s heap=%d mix_max=%luus i2s_underflow=%d",
+    Console.printf("[stats] t=%lus state=%s heap=%d mix_max=%luus i2s_underflow=%d",
                   static_cast<unsigned long>(millis() / 1000), stateName(state), rp2040.getFreeHeap(),
                   static_cast<unsigned long>(audio::maxMixMicros()), audio::i2sUnderflowed());
     printVoice("idle", VOICE_IDLE);
     printVoice("access", VOICE_ACCESS);
     printVoice("spindown", VOICE_SPINDOWN);
-    Serial.printf("\n[stats] sd: chunks=%lu read_err=%lu recoveries=%lu failed_rec=%lu max_read=%luus"
+    Console.printf("\n[stats] sd: chunks=%lu read_err=%lu recoveries=%lu failed_rec=%lu max_read=%luus"
                   " | stress: %s transitions=%lu failures=%lu | supercap=%dmV flt=%d\n",
                   static_cast<unsigned long>(st.chunksRead), static_cast<unsigned long>(st.readErrors),
                   static_cast<unsigned long>(st.recoveries), static_cast<unsigned long>(st.failedRecoveries),
@@ -264,7 +287,7 @@ void stressStep() {
     stressTransitions++;
     if (!ok) {
         stressFailures++;
-        Serial.println("[stress] transition failed");
+        Console.println("[stress] transition failed");
     }
 }
 
@@ -294,29 +317,29 @@ void handleSerial() {
         const char c = Serial.read();
         switch (c) {
             case 'h':
-                Serial.println("firmware v" FIRMWARE_VERSION);
-                Serial.println("h help | s stats | t stress on/off | p simulate power loss | "
+                Console.println("firmware v" FIRMWARE_VERSION);
+                Console.println("h help | s stats | t stress on/off | p simulate power loss | "
                                "a toggle simulated activity | + / - volume | > / < balance | n next pack | k beep test | l power log | d list SD root | m demo mode | j replay jingle | r reboot | b bootloader");
                 break;
             case 's': printStats(); break;
             case 't':
                 if (state != State::Run) {
-                    Serial.println("[stress] only available in RUN");
+                    Console.println("[stress] only available in RUN");
                 } else if (stressOn) {
                     stopStress();
-                    Serial.println("[stress] off");
+                    Console.println("[stress] off");
                 } else {
                     startStress();
-                    Serial.println("[stress] on (counters reset)");
+                    Console.println("[stress] on (counters reset)");
                 }
                 break;
             case 'p':
-                Serial.println("[power] simulated power loss");
+                Console.println("[power] simulated power loss");
                 power::simulateLoss();
                 break;
             case 'a':
                 io::setSimulation(!io::simulation());
-                Serial.printf("[activity] simulation %s\n", io::simulation() ? "on" : "off");
+                Console.printf("[activity] simulation %s\n", io::simulation() ? "on" : "off");
                 break;
             case '+':
             case '-':
@@ -328,14 +351,14 @@ void handleSerial() {
                 break;
             case 'n':
                 if (state == State::Run) changePack();
-                else Serial.println("[pack] only in RUN");
+                else Console.println("[pack] only in RUN");
                 break;
             case 'k': {  // audition the beeps, one profile per press
                 static int next = 0;
                 static const char* const names[] = {"CHANGE_PACK", "FACTORY_RESET", "VOLUME_MODE", "BALANCE_MODE",
                                                     "NO_SD_CARD", "NO_PACKS_ON_SD_CARD", "CORRUPTED_PACK",
                                                     "PACK_NOT_FOUND"};
-                Serial.printf("[beep] %s\n", names[next]);
+                Console.printf("[beep] %s\n", names[next]);
                 beeps::play(static_cast<beeps::Type>(next));
                 next = (next + 1) % 8;
                 break;
@@ -347,7 +370,7 @@ void handleSerial() {
                 io::ampOff();  // audio stopped: safe to write flash
                 persist::state().jinglePlayed = false;
                 persist::commit();
-                Serial.println("[boot] jingle flag cleared, rebooting");
+                Console.println("[boot] jingle flag cleared, rebooting");
                 Serial.flush();
                 rp2040.reboot();
                 break;
@@ -359,7 +382,7 @@ void handleSerial() {
                     pickDemoColour();
                     demoEndsMs = millis() + cfg::DEMO_PACK_MS;
                 }
-                Serial.printf("[demo] %s\n", settings.demoMode ? "on" : "off");
+                Console.printf("[demo] %s\n", settings.demoMode ? "on" : "off");
                 break;
             case 'r': rp2040.reboot(); break;
             case 'b': rp2040.rebootToBootloader(); break;
@@ -375,21 +398,22 @@ void handleSerial() {
 // Open idle/access for `pack` and load its spindown into RAM (or leave it to
 // stream; enterRun() arms it). Logs and returns false if the pack is unusable.
 bool loadPack() {
-    Serial.printf("[pack] %s\n", pack);
+    Console.printf("[pack] %s\n", pack);
+    oled::setPack(pack);
     char p[128];
     samplePath(p, sizeof(p), "idle.wav");
     const bool idleOk = sd::openStream(streamIdle, p, VOICE_IDLE, &ringIdle, true);
     samplePath(p, sizeof(p), "access.wav");
     const bool accessOk = sd::openStream(streamAccess, p, VOICE_ACCESS, &ringAccess, true);
     if (!accessOk || (settings.playIdle && !idleOk)) {
-        Serial.printf("[pack] %s is missing idle.wav/access.wav or they are the wrong format\n", pack);
+        Console.printf("[pack] %s is missing idle.wav/access.wav or they are the wrong format\n", pack);
         return false;
     }
     samplePath(p, sizeof(p), "spindown.wav");
     if (!FORCE_STREAMED_SPINDOWN && sd::loadToRam(p, spindownRam, spindownSamples)) {
-        Serial.printf("[pack] spindown in RAM (%lu ms)\n", static_cast<unsigned long>(samplesToMs(spindownSamples)));
+        Console.printf("[pack] spindown in RAM (%lu ms)\n", static_cast<unsigned long>(samplesToMs(spindownSamples)));
     } else {
-        Serial.println("[pack] spindown will stream from SD");
+        Console.println("[pack] spindown will stream from SD");
     }
     return true;
 }
@@ -438,11 +462,11 @@ bool loadNextPack() {
 void pickDemoColour() {
     uint8_t* c = settings.activityLedColour;
     hueToRgb(static_cast<uint16_t>(random(360)), c[0], c[1], c[2]);
-    Serial.printf("[demo] %s, LED colour %u,%u,%u\n", pack, c[0], c[1], c[2]);
+    Console.printf("[demo] %s, LED colour %u,%u,%u\n", pack, c[0], c[1], c[2]);
 }
 
 void enterDemoSpindown() {
-    Serial.println("[demo] spinning down");
+    Console.println("[demo] spinning down");
     stopPackVoices();
     if (settings.playSpindown) startSpindownVoice();
     state = State::DemoSpindown;
@@ -467,7 +491,7 @@ void changePack() {
     // The audio is stopped and the amp muted, so pausing core 1 for the flash
     // write is harmless. Don't let the stall detector mistake it for a hang.
     const uint32_t ms = persist::commit();
-    if (ms) Serial.printf("[persist] saved pack in %lu ms\n", static_cast<unsigned long>(ms));
+    if (ms) Console.printf("[persist] saved pack in %lu ms\n", static_cast<unsigned long>(ms));
     lastHeartbeatChangeMs = millis();
     if (settings.playIdle) sd::prime(streamIdle);
     sd::prime(streamAccess);
@@ -478,7 +502,7 @@ void changePack() {
 // Long press (3 s) of the action button: forget the chosen pack and the
 // jingle flag, then reboot into the defaults (action_button.py).
 void factoryReset() {
-    Serial.println("[pack] factory reset");
+    Console.println("[pack] factory reset");
     stopPackVoices();
     beepAndWait(beeps::Type::FactoryReset);
     io::ampOff();
@@ -502,7 +526,7 @@ bool chooseRandomPack() {
         if (index >= previous) ++index;
     }
     sd::packByIndex(index, pack, sizeof(pack), count);
-    Serial.printf("[boot] random pack %d of %d: %s\n", index + 1, count, pack);
+    Console.printf("[boot] random pack %d of %d: %s\n", index + 1, count, pack);
     PersistedState& saved = persist::state();
     strncpy(saved.desiredPack, pack, sizeof(saved.desiredPack) - 1);
     persist::commit();
@@ -523,10 +547,10 @@ const char* resetReasonName() {
 }
 
 void boot() {
-    Serial.println("\n[boot] HDD Synth MK5 C++ firmware v" FIRMWARE_VERSION " (proof of concept)");
-    Serial.printf("[boot] reset reason: %s\n", resetReasonName());
+    Console.println("\n[boot] HDD Synth MK5 C++ firmware v" FIRMWARE_VERSION " (proof of concept)");
+    Console.printf("[boot] reset reason: %s\n", resetReasonName());
 #if WAIT_FOR_SERIAL_MS > 0
-    Serial.printf("[boot] debug build (USB upload): waited up to %d ms for the serial console\n", WAIT_FOR_SERIAL_MS);
+    Console.printf("[boot] debug build (USB upload): waited up to %d ms for the serial console\n", WAIT_FOR_SERIAL_MS);
 #endif
     io::begin(settings);  // amp off, LEDs off before anything else
 
@@ -538,7 +562,7 @@ void boot() {
     static char json[2048];
     size_t len = 0;
     if (sd::readTextFile("/settings.json", json, sizeof(json), len) && !parseSettingsJson(json, settings)) {
-        Serial.println("[settings] settings.json is not valid JSON, using defaults");
+        Console.println("[settings] settings.json is not valid JSON, using defaults");
     }
     if (settings.demoMode) settings.simulationMode = true;  // the demo fakes HDD activity
     io::setSimulation(settings.simulationMode);
@@ -548,6 +572,7 @@ void boot() {
     powerlog::begin();
     persist::begin();
     savedlevels::begin(settings);  // before anything uses the volume
+    oled::begin(settings);         // before the pack loads, so its 1 KB counts against the spindown's RAM check
 
     // Which pack: RANDOM_SAMPLE_PACK, else SAMPLE_PACK in settings.json (as in
     // the CircuitPython firmware), then the one last chosen with the action
@@ -558,7 +583,7 @@ void boot() {
         if (settings.samplePack[0] && !settings.randomSamplePack) {
             if (sd::packExists(settings.samplePack)) preferred = settings.samplePack;
             else {
-                Serial.printf("[boot] SAMPLE_PACK '%s' not found\n", settings.samplePack);
+                Console.printf("[boot] SAMPLE_PACK '%s' not found\n", settings.samplePack);
                 beepAndWait(beeps::Type::PackNotFound);  // a warning: carry on with another pack
                 io::ampOff();
             }
@@ -569,20 +594,20 @@ void boot() {
         halt("no sample packs in /samples", beeps::Type::NoPacksOnSdCard);
         return;
     }
-    if (FORCE_STREAMED_SPINDOWN) Serial.println("[boot] test build: FORCE_STREAMED_SPINDOWN");
+    if (FORCE_STREAMED_SPINDOWN) Console.println("[boot] test build: FORCE_STREAMED_SPINDOWN");
     if (!loadPack()) {
         halt("pack is missing idle.wav/access.wav or they are the wrong format (hold the action button 3 s to reset)",
              beeps::Type::CorruptedPack);
         return;
     }
-    Serial.printf("[boot] free heap %d\n", rp2040.getFreeHeap());
+    Console.printf("[boot] free heap %d\n", rp2040.getFreeHeap());
 
     rp2040.wdt_begin(cfg::WATCHDOG_MS);
     lastHeartbeatChangeMs = millis();
     io::ampOn();
 
     if (settings.demoMode) {
-        Serial.printf("[demo] on: %lu s per pack, cycling through every pack\n",
+        Console.printf("[demo] on: %lu s per pack, cycling through every pack\n",
                       static_cast<unsigned long>(cfg::DEMO_PACK_MS / 1000));
         pickDemoColour();
     }
@@ -614,11 +639,11 @@ void jingleLights() {
 bool startJingle() {
     if (persist::state().jinglePlayed && !settings.alwaysPlayJingle) return false;
     if (!sd::openStream(streamSpinup, "/jingle.wav", VOICE_SPINUP, &ringOneShot, false)) {
-        Serial.println("[boot] no /jingle.wav, skipping the jingle");
+        Console.println("[boot] no /jingle.wav, skipping the jingle");
         return false;
     }
     if (!sd::prime(streamSpinup) || !audio::startStream(VOICE_SPINUP, &ringOneShot, LEVEL_UNITY)) return false;
-    Serial.println("[boot] jingle");
+    Console.println("[boot] jingle");
     jingleLevel.reset();
     jingleStartMs = jingleNextLightMs = millis();
     return true;
@@ -645,7 +670,7 @@ void startSpinup() {
     if (settings.playSpinup && sd::openStream(streamSpinup, p, VOICE_SPINUP, &ringOneShot, false) &&
         sd::prime(streamSpinup) &&
         audio::startStream(VOICE_SPINUP, &ringOneShot, levelFromFloat(settings.volume))) {
-        Serial.println("[boot] spinup");
+        Console.println("[boot] spinup");
     }
     // Fill the loop rings while spinup plays, so RUN starts seamlessly.
     if (settings.playIdle) sd::prime(streamIdle);
@@ -658,7 +683,7 @@ void enterRun() {
     if (!spindownRam) armSpindown();
     if (settings.playIdle) audio::startStream(VOICE_IDLE, &ringIdle, idleLevel());
     audio::startStream(VOICE_ACCESS, &ringAccess, 0);
-    Serial.println("[run] idle/access looping");
+    Console.println("[run] idle/access looping");
     audio::i2sUnderflowed();  // clear the flag left by I2S starting before audio existed
     nextStatsMs = millis() + 5000;
     demoEndsMs = millis() + cfg::DEMO_PACK_MS;
@@ -666,6 +691,7 @@ void enterRun() {
 }
 
 void enterSpindown() {
+    oled::off();  // lit, the panel would take a real share of the supercap's energy
     const bool simulated = power::simulated();
     powerlog::start(simulated ? "simulated (serial p)" : "FLT low", simulated);
     powerlog::logf("[power] loss detected, firmware v" FIRMWARE_VERSION ", pack %s, supercap %d mV", pack,
@@ -728,6 +754,7 @@ void loop() {
 
         case State::Jingle:
             sd::pump();
+            oled::service();
             savedlevels::service();
             controls::poll();  // volume changes apply from the spinup on; the jingle is pinned at full
             beeps::service();
@@ -738,6 +765,7 @@ void loop() {
 
         case State::Spinup:
             sd::pump();
+            oled::service();
             savedlevels::service();
             controls::poll();  // pack changes wait for RUN; volume applies straight away
             audio::setLevel(VOICE_SPINUP, levelFromFloat(settings.volume));
@@ -749,6 +777,7 @@ void loop() {
 
         case State::Run: {
             sd::pump();
+            oled::service();
             savedlevels::service();
             const controls::Action action = controls::poll();
             if (power::lost()) enterSpindown();
@@ -761,6 +790,7 @@ void loop() {
 
         case State::DemoSpindown: {
             sd::pump();
+            oled::service();
             savedlevels::service();
             const controls::Action action = controls::poll();
             beeps::service();
@@ -778,6 +808,7 @@ void loop() {
                 io::ampOff();
                 powerlog::logf("[power] spindown complete, supercap %d mV, longest core 0 stall %lu us",
                                power::supercapMillivolts(), static_cast<unsigned long>(maxLoopGapUs));
+                enterLowPower();
                 state = State::WaitPower;
             }
             break;
@@ -791,6 +822,7 @@ void loop() {
             break;
 
         case State::Halted:
+            oled::service();  // e.g. the debug screen shows the fatal error
             // A factory reset is still possible, e.g. when the saved pack is broken.
             if (controls::poll() == controls::Action::FactoryReset) factoryReset();
             // Repeat the error's beep pattern in red so a headless unit shows

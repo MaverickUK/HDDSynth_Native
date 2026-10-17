@@ -1,6 +1,9 @@
 #include "io.h"
 
 #include <Arduino.h>
+#include <hardware/pwm.h>
+
+#include <initializer_list>
 
 #include "config.h"
 
@@ -53,6 +56,17 @@ void rgbOff() {
 }
 
 void hddLed(bool on) { digitalWrite(cfg::PIN_HDD_LED, on ? HIGH : LOW); }
+
+void ledsOffForLowPower() {
+    // rgbOff() leaves PWM running at 100% duty (the LED is common anode, so
+    // HIGH = off). As plain outputs held HIGH, the PWM slices can stop.
+    for (uint8_t pin : {cfg::PIN_RGB_RED, cfg::PIN_RGB_GREEN, cfg::PIN_RGB_BLUE}) {
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, HIGH);
+        pwm_set_enabled(pwm_gpio_to_slice_num(pin), false);  // slices 2 and 3: only the RGB LED uses them
+    }
+    hddLed(false);
+}
 
 void setSimulation(bool on) { simulate = on; }
 bool simulation() { return simulate; }

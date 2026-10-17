@@ -141,6 +141,9 @@ trigger the release workflow.
   action button (`button.h`: debounce and short/long press, host-tested).
 - `persist.*`: saved pack and jingle flag in the EEPROM-emulation flash
   sector; `persist_format.*` is the CRC-checked record (host-tested).
+- `console.*`: **print through `Console`, not `Serial`.** It writes to USB
+  serial and keeps the last lines for the OLED debug screen. (Reading serial
+  commands still uses `Serial`.)
 - `power.*`: FLT interrupt with 3 ms confirm, supercap ADC, restore detection.
 - `powerlog.*`: from power loss onwards, logs power lines to `/powerlog.bin`
   with raw sector writes so they survive the board dying; `l` prints them.
@@ -168,6 +171,11 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   (`DEMO_SPINDOWN` state) and a random hue for the activity LED. Forces
   simulated activity. Never writes flash (a write per minute would wear the
   sector out). Serial `m` toggles it for testing.
+- Low-power wait after a power-loss spindown (`enterLowPower()` in main.cpp):
+  core 1 parks (I2S stopped, WFE), then clk_sys drops to 48 MHz via
+  `set_sys_clock_48mhz()`, LEDs and OLED off. One-way: the exit is a reboot.
+  Cut 1 drew ~130 mW in this wait; the aim is a fraction of that. **Not yet
+  tried on hardware.**
 - Jingle light show: while the jingle plays, the RGB LED cycles the rainbow
   (`cfg::JINGLE_RAINBOW_MS`) and its brightness follows the loudness. Core 1
   publishes each mixed block's peak (`audio::outputPeak()`); core 0 smooths
@@ -197,7 +205,13 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
       spinup; `ALWAYS_PLAY_JINGLE` is a settings.json key here);
       `RANDOM_SAMPLE_PACK` (avoids the previous pack, saves its choice).
       RANDOM_SAMPLE_PACK is not yet tried on hardware.
-- [ ] OLED (I2C on GP24/25): parked until it is specified (owner, 2026-10-15)
+- [x] OLED (SSD1306 on J6, I2C0 GP24/25), opt-in with `OLED_ENABLED`; modes
+      `activity`/`supercap`/`debug`, plus volume/balance screens for 4 s
+      after a change. **Not yet tried on hardware.** Drawing is pure C++
+      (`canvas.*`, `oled_screens.*`, `oled_model.h`, host-tested, previews in
+      `docs/oled/`); `oled.*` is the I2C driver and screen logic. A frame
+      blocks core 0 ~25 ms at 400 kHz, so frames are rate-limited. The panel
+      switches off at power loss.
 - [x] `WAIT_FOR_SERIAL_MS` (1.5 s boot wait for the console) only in USB
       uploads: `scripts/serial_wait.py` adds it to project sources when the
       `upload` target is used. CI and release UF2s don't wait.

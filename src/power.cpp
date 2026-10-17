@@ -4,6 +4,7 @@
 #include <atomic>
 
 #include "config.h"
+#include "console.h"
 
 namespace power {
 
@@ -65,8 +66,9 @@ float supercapVolts() {
 
 void waitForRestore(void (*idle)()) {
     if (!enabled || simulatedLoss) {
-        // Nothing real to wait for: give the user a moment to read the log.
-        for (int i = 0; i < 30; ++i) {
+        // Nothing real to wait for: hold the low-power wait for 10 s (long
+        // enough to read a USB power meter), then restart.
+        for (int i = 0; i < 100; ++i) {
             idle();
             delay(100);
         }
@@ -87,7 +89,7 @@ void waitForRestore(void (*idle)()) {
         }
         if (v < baseline) baseline = v;
         if (v - baseline >= cfg::RESTORE_RISE_V) {
-            Serial.printf("[power] restored (supercap %d mV -> %d mV)\n", static_cast<int>(baseline * 1000),
+            Console.printf("[power] restored (supercap %d mV -> %d mV)\n", static_cast<int>(baseline * 1000),
                           static_cast<int>(v * 1000));
             return;
         }

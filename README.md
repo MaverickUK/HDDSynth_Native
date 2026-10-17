@@ -134,12 +134,47 @@ default. For example:
 | `RGB_LED_BRIGHTNESS` | `0.5` | Overall RGB LED brightness, 0.0 to 1.0 (applies to beeps and the jingle show too). |
 | `ALWAYS_PLAY_JINGLE` | `false` | Play `/jingle.wav` at every boot, not just the first. *(New: a code constant in CircuitPython.)* |
 | `DEMO_MODE` | `false` | Demo mode, see below. *(New.)* |
+| `OLED_ENABLED` | `false` | Use an SSD1306 128x64 I2C OLED on header J6, see [OLED display](#oled-display). *(New.)* |
+| `OLED_MODE` | `"activity"` | The OLED's main screen: `"activity"`, `"supercap"` or `"debug"`. *(New.)* |
+| `OLED_SAMPLE_MS` | `1000` | Time covered by each column of the activity and supercap graphs (minimum 50). *(New.)* |
 
 **Demo mode:** each pack spins up, plays idle/access with simulated HDD
 activity for 60 seconds, plays its spindown, and hands over to the next
 pack, looping forever. Each pack gets a random activity LED colour. A short
 press of the action button skips to the next pack. Demo pack changes are
 not saved, so after a power cut it starts again from the usual pack.
+
+## OLED display
+
+An optional SSD1306 128x64 I2C OLED (e.g. The Pi Hut's 0.96" module, address
+0x3C) plugs straight into header **J6**: pin 1 3.3 V, 2 GND, 3 SCL (GP25),
+4 SDA (GP24). The board has no I2C pull-ups on J6; these modules carry their
+own. Turn it on with `"OLED_ENABLED": true`. If no display answers, the boot
+log says so and the firmware carries on without it.
+
+`OLED_MODE` picks the main screen:
+
+| Mode | Shows |
+|---|---|
+| `activity` (default) | The pack name in a title bar, and a graph of HDD activity: one column per `OLED_SAMPLE_MS`, its height the share of that time the drive was active. New columns appear on the right and push the rest left. |
+| `supercap` | The same graph for the supercap voltage (full height = 4.2 V), with the current voltage in the title bar. |
+| `debug` | The last 8 lines of console output (everything printed to the USB serial console). |
+
+Whatever the mode, turning the **volume** or **balance** switches to a screen
+for that level, which stays for 4 seconds after the last change. The display
+switches off on power loss, to save the supercap's energy for the spindown.
+
+| Activity | Volume | Balance |
+|---|---|---|
+| ![Activity screen](docs/oled/activity.png) | ![Volume screen](docs/oled/volume_65.png) | ![Balance screen](docs/oled/balance_20.png) |
+
+| Supercap | Debug |
+|---|---|
+| ![Supercap screen](docs/oled/supercap.png) | ![Debug screen](docs/oled/debug.png) |
+
+These are rendered by the host tests from the same drawing code the firmware
+uses (with made-up data). To regenerate them:
+`HDDSYNTH_PREVIEW_DIR=docs/oled test/run_native_tests.sh && python3 test/pbm_to_png.py docs/oled`.
 
 ## Controls
 
@@ -274,6 +309,14 @@ Stats lines look like:
 - `max_read` is the slowest single 2 KB SD read since the last stats line.
 - `i2s_underflow` means the audio core itself fell behind. It should never
   happen.
+
+## Power loss
+
+When power fails the spindown plays from the supercap. Then the board waits
+for power to come back in a **low-power state**: the audio core is stopped,
+the clock drops from 150 to 48 MHz, and the LEDs, amp and OLED are off. That
+stretches how long the supercap lasts, so short outages are ridden out, and
+the board reboots normally when power returns.
 
 ## Power-loss log
 

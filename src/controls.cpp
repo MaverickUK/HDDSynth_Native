@@ -6,6 +6,7 @@
 #include "beeps.h"
 #include "button.h"
 #include "config.h"
+#include "console.h"
 #include "quadrature.h"
 
 namespace controls {
@@ -64,13 +65,13 @@ void begin(Settings& s) {
 
 bool adjustVolume(int steps) {
     if (!settings || !adjustPercent(settings->volume, steps, cfg::VOLUME_STEP_PERCENT)) return false;
-    Serial.printf("[volume] %d%%\n", static_cast<int>(lroundf(settings->volume * 100)));
+    Console.printf("[volume] %d%%\n", static_cast<int>(lroundf(settings->volume * 100)));
     return true;
 }
 
 bool adjustBalance(int steps) {
     if (!settings || !adjustPercent(settings->balance, steps, cfg::BALANCE_STEP_PERCENT)) return false;
-    Serial.printf("[balance] %d%% access\n", static_cast<int>(lroundf(settings->balance * 100)));
+    Console.printf("[balance] %d%% access\n", static_cast<int>(lroundf(settings->balance * 100)));
     return true;
 }
 
@@ -78,7 +79,7 @@ Action poll() {
     const uint32_t now = millis();
     if (encoderButton.update(digitalRead(cfg::PIN_ENC_BUTTON) == LOW, now) == Button::Event::Pressed) {
         currentMode = currentMode == Mode::Volume ? Mode::Balance : Mode::Volume;
-        Serial.printf("[encoder] mode: %s\n", currentMode == Mode::Volume ? "volume" : "balance");
+        Console.printf("[encoder] mode: %s\n", currentMode == Mode::Volume ? "volume" : "balance");
         beeps::play(currentMode == Mode::Volume ? beeps::Type::VolumeMode : beeps::Type::BalanceMode);
     }
     int32_t detents = pendingDetents.exchange(0, std::memory_order_relaxed);

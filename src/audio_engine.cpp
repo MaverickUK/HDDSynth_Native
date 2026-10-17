@@ -14,6 +14,8 @@ std::atomic<uint32_t> heartbeatCount{0};
 std::atomic<uint32_t> worstMixUs{0};
 std::atomic<bool> underflowLatched{false};
 std::atomic<uint16_t> lastBlockPeak{0};
+std::atomic<bool> parkRequested{false};  // core 0 -> core 1: stop audio for good
+std::atomic<bool> parked{false};         // core 1 -> core 0: I2S stopped, core 1 asleep
 
 constexpr uint32_t STOP_TIMEOUT_MS = 100;  // core 1 acks within one 8 ms block
 
@@ -33,6 +35,18 @@ void core1Setup() {
 }
 
 void core1Loop() {
+    if (parkRequested.load(std::memory_order_acquire)) {
+        // Low-power wait after the spindown: stop I2S (on this core, which
+        // began it) and sleep until the reboot. WFE wakes only on events and
+        // interrupts, and with I2S ended there are none of ours.
+        if (!parked.load(std::memory_order_relaxed)) {
+            i2s.end();
+            parked.store(true, std::memory_order_release);
+        }
+        __wfe();
+        return;
+    }
+
     static int16_t mono[cfg::MIX_BLOCK_FRAMES];
     static uint32_t stereo[cfg::MIX_BLOCK_FRAMES];
     constexpr size_t blockBytes = cfg::MIX_BLOCK_FRAMES * sizeof(uint32_t);
@@ -62,6 +76,16 @@ void core1Loop() {
 }
 
 Voice& voice(VoiceId id) { return voices[id]; }
+
+bool shutdownForLowPower() {
+    parkRequested.store(true, std::memory_order_release);
+    __sev();  // in case core 1 is already waiting for an event
+    const uint32_t t0 = millis();
+    while (!parked.load(std::memory_order_acquire)) {
+        if (millis() - t0 > STOP_TIMEOUT_MS) return false;
+    }
+    return true;
+}
 
 bool isPlaying(VoiceId id) {
     return voices[id].state.load(std::memory_order_acquire) == VS_PLAYING;

@@ -36,6 +36,11 @@ void setLevel(VoiceId id, uint16_t level);
 void markEndOfStream(VoiceId id);
 Voice& voice(VoiceId id);
 
+// After the spindown, while waiting on the supercap: stop I2S and park core
+// 1 asleep until the next reboot (there is no way back). Waits for core 1 to
+// confirm; returns false if it didn't within 100 ms. Nothing may play after.
+bool shutdownForLowPower();
+
 // ---- Health ----
 uint32_t heartbeat();          // increments once per mixed block
 uint16_t outputPeak();         // peak |sample| (0..32767) of the latest mixed block

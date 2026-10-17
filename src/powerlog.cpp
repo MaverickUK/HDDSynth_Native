@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <stdarg.h>
 
+#include "console.h"
 #include "powerlog_format.h"
 #include "sd_streamer.h"
 
@@ -76,16 +77,16 @@ void append(const char* line, size_t len) {
 bool begin() {
     ready = sd::reserveFile(PATH, LOG_BYTES, firstSector, sectorCount);
     if (!ready) {
-        Serial.println("[powerlog] cannot reserve /powerlog.bin, power-loss logging is off");
+        Console.println("[powerlog] cannot reserve /powerlog.bin, power-loss logging is off");
         return false;
     }
     size_t bytes = 0;
     lastSession = readSession([&](const char*, size_t n) { bytes += n; });
     if (lastSession) {
-        Serial.printf("[powerlog] last power loss logged (session %lu, %u bytes): send 'l' to print it\n",
+        Console.printf("[powerlog] last power loss logged (session %lu, %u bytes): send 'l' to print it\n",
                       static_cast<unsigned long>(lastSession), static_cast<unsigned>(bytes));
     } else {
-        Serial.println("[powerlog] no power loss logged yet");
+        Console.println("[powerlog] no power loss logged yet");
     }
     return true;
 }
@@ -114,7 +115,7 @@ void logf(const char* fmt, ...) {
     if (n > static_cast<int>(sizeof(line)) - 2) n = sizeof(line) - 2;
     line[n++] = '\n';
     line[n] = 0;
-    if (serialOn) Serial.print(line);
+    if (serialOn) Console.print(line);
     append(line, static_cast<size_t>(n));
 }
 
@@ -128,13 +129,13 @@ void flush() {
 
 void printLast() {
     if (!ready) {
-        Serial.println("[powerlog] not available");
+        Console.println("[powerlog] not available");
         return;
     }
     flush();
-    Serial.println("[powerlog] ---- last power loss ----");
-    const uint32_t s = readSession([](const char* t, size_t n) { Serial.write(t, n); });
-    Serial.println(s ? "[powerlog] ---- end ----" : "[powerlog] nothing logged");
+    Console.println("[powerlog] ---- last power loss ----");
+    const uint32_t s = readSession([](const char* t, size_t n) { Console.write(t, n); });
+    Console.println(s ? "[powerlog] ---- end ----" : "[powerlog] nothing logged");
 }
 
 } // namespace powerlog

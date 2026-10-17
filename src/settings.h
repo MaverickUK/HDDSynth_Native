@@ -4,6 +4,8 @@
 
 #include <stdint.h>
 
+enum class OledMode : uint8_t { Activity, Supercap, Debug };
+
 struct Settings {
     bool simulationMode = false;
     bool playSpinup = true;
@@ -23,6 +25,9 @@ struct Settings {
     bool randomSamplePack = false;   // RANDOM_SAMPLE_PACK: overrides SAMPLE_PACK
     bool alwaysPlayJingle = false;   // ALWAYS_PLAY_JINGLE (a settings.py constant in Python)
     bool demoMode = false;           // DEMO_MODE: cycle through every pack (see main.cpp)
+    bool oledEnabled = false;        // OLED_ENABLED: the 128x64 display on J6
+    OledMode oledMode = OledMode::Activity;  // OLED_MODE: "activity", "supercap" or "debug"
+    uint32_t oledSampleMs = 1000;    // OLED_SAMPLE_MS: time per graph column
 };
 
 // Parse JSON text into `s` (unknown keys ignored, bad values keep defaults).

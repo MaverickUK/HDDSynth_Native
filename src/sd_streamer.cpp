@@ -6,6 +6,7 @@
 #include <hardware/gpio.h>
 
 #include "config.h"
+#include "console.h"
 
 namespace sd {
 
@@ -57,7 +58,7 @@ bool mount() {
     setSpiPins();
     mounted = card.begin(spiConfig());
     if (!mounted) {
-        Serial.printf("[sd] mount failed: error 0x%02X data 0x%02X\n",
+        Console.printf("[sd] mount failed: error 0x%02X data 0x%02X\n",
                       card.sdErrorCode(), card.sdErrorData());
     }
     return mounted;
@@ -74,7 +75,7 @@ bool reopenAll() {
         if (!s || !s->open) continue;
         files[i].close();
         if (!files[i].open(s->path, O_RDONLY) || !seekTo(*s, files[i])) {
-            Serial.printf("[sd] reopen failed: %s\n", s->path);
+            Console.printf("[sd] reopen failed: %s\n", s->path);
             return false;
         }
     }
@@ -113,7 +114,7 @@ void markDown() {
     mounted = false;
     downSinceMs = millis();
     nextRemountMs = downSinceMs;  // the first look is immediate
-    Serial.println("[sd] card down, playing from buffers");
+    Console.println("[sd] card down, playing from buffers");
 }
 
 void tryRemount() {
@@ -123,7 +124,7 @@ void tryRemount() {
     if (!cardResponds()) return;  // still absent: try again later
     if (mount() && reopenAll()) {
         st.recoveries++;
-        Serial.printf("[sd] card back after %lu ms\n", static_cast<unsigned long>(millis() - downSinceMs));
+        Console.printf("[sd] card back after %lu ms\n", static_cast<unsigned long>(millis() - downSinceMs));
         return;
     }
     // A card answered but would not mount or reopen. Leave it down and retry.
@@ -152,10 +153,10 @@ int readData(Stream& s, int slot, uint8_t* dst, uint32_t bytes) {
             return n;
         }
         st.readErrors++;
-        Serial.printf("[sd] read error on %s at %lu (got %d), attempt %d\n", s.path,
+        Console.printf("[sd] read error on %s at %lu (got %d), attempt %d\n", s.path,
                       static_cast<unsigned long>(s.pos), n, attempt + 1);
     }
-    Serial.printf("[sd] giving up on reads after %lu ms\n", static_cast<unsigned long>(millis() - firstTry));
+    Console.printf("[sd] giving up on reads after %lu ms\n", static_cast<unsigned long>(millis() - firstTry));
     markDown();
     return -1;
 }
@@ -211,14 +212,14 @@ bool openStream(Stream& s, const char* path, VoiceId voice, SampleRing* ring, bo
 
     FsFile& f = files[slot];
     if (!f.open(path, O_RDONLY)) {
-        Serial.printf("[sd] cannot open %s\n", path);
+        Console.printf("[sd] cannot open %s\n", path);
         return false;
     }
     uint8_t header[1024];
     const int n = f.read(header, sizeof(header));
     const WavError e = parseWavHeader(header, n > 0 ? n : 0, static_cast<uint32_t>(f.fileSize()), s.info);
     if (e != WavError::Ok || !wavIsPlayable(s.info, cfg::SAMPLE_RATE)) {
-        Serial.printf("[sd] %s: %s (fmt %u, %u ch, %lu Hz, %u bit)\n", path,
+        Console.printf("[sd] %s: %s (fmt %u, %u ch, %lu Hz, %u bit)\n", path,
                       e == WavError::Ok ? "wrong format" : wavErrorName(e), s.info.format,
                       s.info.channels, static_cast<unsigned long>(s.info.sampleRate), s.info.bitsPerSample);
         f.close();
@@ -286,7 +287,7 @@ bool loadToRam(const char* path, int16_t*& data, uint32_t& samples) {
         return false;
     }
     if (rp2040.getFreeHeap() < static_cast<int>(info.dataBytes + cfg::HEAP_RESERVE_BYTES)) {
-        Serial.printf("[sd] %s (%lu bytes) won't fit in RAM, free heap %d\n", path,
+        Console.printf("[sd] %s (%lu bytes) won't fit in RAM, free heap %d\n", path,
                       static_cast<unsigned long>(info.dataBytes), rp2040.getFreeHeap());
         return false;
     }
@@ -347,7 +348,7 @@ bool choosePack(const char* preferred, char* out, size_t outLen) {
             out[outLen - 1] = 0;
             return true;
         }
-        Serial.printf("[sd] pack '%s' not found, using first pack\n", preferred);
+        Console.printf("[sd] pack '%s' not found, using first pack\n", preferred);
     }
     return nextPackName("", out, outLen);
 }
@@ -387,7 +388,7 @@ bool reserveFile(const char* path, uint32_t bytes, uint32_t& firstSector, uint32
     const bool contiguous = f.contiguousRange(&first, &last);
     f.close();
     if (!contiguous || (last - first + 1) * 512 < bytes) {
-        Serial.printf("[sd] %s is not a contiguous %lu bytes; delete it to recreate\n", path,
+        Console.printf("[sd] %s is not a contiguous %lu bytes; delete it to recreate\n", path,
                       static_cast<unsigned long>(bytes));
         return false;
     }
@@ -403,15 +404,15 @@ bool writeSector(uint32_t sector, const uint8_t* src) { return mounted && card.c
 void listDir(const char* path) {
     FsFile dir, entry;
     if (!mounted || !dir.open(path)) {
-        Serial.printf("[sd] cannot open %s\n", path);
+        Console.printf("[sd] cannot open %s\n", path);
         return;
     }
-    Serial.printf("[sd] %s:\n", path);
+    Console.printf("[sd] %s:\n", path);
     char name[96];
     while (entry.openNext(&dir, O_RDONLY)) {
         entry.getName(name, sizeof(name));
-        if (entry.isDir()) Serial.printf("  %s/\n", name);
-        else Serial.printf("  %s  (%lu bytes)\n", name, static_cast<unsigned long>(entry.fileSize()));
+        if (entry.isDir()) Console.printf("  %s/\n", name);
+        else Console.printf("  %s  (%lu bytes)\n", name, static_cast<unsigned long>(entry.fileSize()));
         entry.close();
     }
 }

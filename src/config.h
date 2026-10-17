@@ -24,6 +24,8 @@ constexpr uint8_t PIN_ACTION_BUTTON = 19;
 constexpr uint8_t PIN_ENC_A         = 20;
 constexpr uint8_t PIN_ENC_B         = 21;
 constexpr uint8_t PIN_ENC_BUTTON    = 22;
+constexpr uint8_t PIN_OLED_SDA      = 24;  // J6 pin 4 (I2C0)
+constexpr uint8_t PIN_OLED_SCL      = 25;  // J6 pin 3
 constexpr uint8_t PIN_SUPERCAP_ADC  = 27;  // ADC1, via 22k/22k divider
 constexpr uint8_t PIN_POWER_FLT     = 28;  // eFuse /FLT, open drain, external pull-up. LOW = fault
 
@@ -61,6 +63,14 @@ constexpr uint32_t JINGLE_LIGHT_STEP_MS = 10;   // LED update interval
 
 // ---- Saved volume/balance ----
 constexpr uint32_t SAVE_LEVELS_DEBOUNCE_MS = 2000;  // save this long after the last change
+
+// ---- OLED (SSD1306 128x64 on J6) ----
+constexpr uint8_t  OLED_I2C_ADDR       = 0x3C;
+constexpr uint32_t OLED_I2C_HZ         = 400000;  // a full frame takes ~25 ms at this speed
+constexpr uint32_t OLED_OVERLAY_MS     = 4000;    // volume/balance screen stays this long after a change
+constexpr uint32_t OLED_FRAME_MS       = 100;     // at most 10 frames/s (each blocks core 0 ~25 ms)
+constexpr uint32_t OLED_DEBUG_FRAME_MS = 250;     // debug text redraws at most 4 times/s
+constexpr int      OLED_SUPERCAP_FULL_MV = 4200;  // top of the supercap graph
 
 // ---- Demo mode ----
 constexpr uint32_t DEMO_PACK_MS = 60000;  // how long each pack plays before spinning down

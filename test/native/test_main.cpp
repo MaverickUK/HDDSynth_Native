@@ -1,6 +1,6 @@
 // Host-side unit tests for the platform-independent firmware code:
 // WAV parsing, the power log and persisted-state formats, encoder and
-// button handling, beep synthesis, the SPSC ring buffer and the mixer (including a two-thread
+// button handling, beep synthesis, OLED screens, the SPSC ring buffer and the mixer (including a two-thread
 // producer/consumer test that mirrors core 0 / core 1).
 //
 // Run: test/run_native_tests.sh [path/to/HDDSynth_Samples]
@@ -18,8 +18,11 @@
 #include <vector>
 
 #include "mixer.h"
+#include "oled_model.h"
+#include "oled_screens.h"
 #include "beep.h"
 #include "button.h"
+#include "canvas.h"
 #include "colour.h"
 #include "crc32.h"
 #include "level_follower.h"
@@ -768,6 +771,149 @@ TEST(levels_saver_debounces_two_seconds) {
     CHECK(sv.update(60, 70, 24000));
 }
 
+
+// ---- OLED ---------------------------------------------------------------------
+
+// Set HDDSYNTH_PREVIEW_DIR to write each screen as a PBM image (for previews).
+static void preview(const Canvas& c, const char* name) {
+    const char* dir = std::getenv("HDDSYNTH_PREVIEW_DIR");
+    if (!dir) return;
+    std::ofstream f(std::string(dir) + "/" + name + ".pbm");
+    f << "P1\n" << Canvas::WIDTH << " " << Canvas::HEIGHT << "\n";
+    for (int y = 0; y < Canvas::HEIGHT; ++y) {
+        for (int x = 0; x < Canvas::WIDTH; ++x) f << (c.get(x, y) ? "1 " : "0 ");
+        f << "\n";
+    }
+}
+
+static int litPixels(const Canvas& c, int x0, int y0, int x1, int y1) {
+    int n = 0;
+    for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x) n += c.get(x, y);
+    return n;
+}
+
+TEST(canvas_pixels_and_ssd1306_layout) {
+    Canvas c;
+    c.pixel(0, 0);
+    c.pixel(5, 9);   // page 1, bit 1
+    c.pixel(200, 3); // clipped
+    CHECK(c.get(0, 0) && c.get(5, 9) && !c.get(6, 9));
+    CHECK_EQ(c.data()[0], 0x01);
+    CHECK_EQ(c.data()[128 + 5], 0x02);
+    c.fillRect(-5, -5, 10, 10);  // clipped at the corner
+    CHECK(c.get(4, 4) && !c.get(5, 5));
+    c.clear();
+    CHECK_EQ(litPixels(c, 0, 0, 127, 63), 0);
+}
+
+TEST(canvas_text) {
+    Canvas c;
+    CHECK_EQ(Canvas::textWidth("Volume"), 35);
+    const int end = c.text(0, 0, "A");
+    CHECK_EQ(end, 6);
+    CHECK(c.get(2, 0) && !c.get(5, 0));  // 'A' apex, then the gap column
+    c.fillRect(0, 10, 20, 10);
+    c.text(0, 11, "A", false);  // dark text on a lit bar
+    CHECK(!c.get(2, 11));
+}
+
+TEST(oled_history_pushes_left) {
+    oled::SampleHistory h;
+    for (int i = 1; i <= 130; ++i) h.push(static_cast<uint8_t>(i));
+    CHECK_EQ(h.count(), 128);
+    CHECK_EQ(h.ago(0), 130);
+    CHECK_EQ(h.ago(127), 3);
+}
+
+TEST(oled_duty_meter) {
+    oled::DutyMeter m(1000);
+    uint8_t v = 0;
+    // Each call passes the state during the time since the previous call.
+    CHECK(!m.update(false, 0, v));
+    CHECK(!m.update(false, 250, v));   // off 0-250
+    CHECK(!m.update(true, 750, v));    // on 250-750
+    CHECK(m.update(false, 1000, v));   // off 750-1000: one period done
+    CHECK(v >= 126 && v <= 128);       // half the time active
+    CHECK(!m.update(true, 1500, v));
+    CHECK(m.update(true, 2000, v));
+    CHECK_EQ(v, 255);                  // all on (500 ms at the end counted from 1000)
+}
+
+TEST(oled_console_wraps_and_scrolls) {
+    oled::TextConsole t;
+    for (int i = 0; i < 10; ++i) {
+        char line[32];
+        std::snprintf(line, sizeof(line), "line %d\r\n", i);
+        t.write(line);
+    }
+    CHECK(std::strcmp(t.row(oled::TextConsole::ROWS - 1), "") == 0);  // after the last newline
+    CHECK(std::strcmp(t.row(oled::TextConsole::ROWS - 2), "line 9") == 0);
+    t.write("0123456789012345678901234");  // 25 chars: wraps after 21
+    CHECK(std::strcmp(t.row(oled::TextConsole::ROWS - 2), "012345678901234567890") == 0);
+    CHECK(std::strcmp(t.row(oled::TextConsole::ROWS - 1), "1234") == 0);
+}
+
+TEST(oled_overlay_holds_four_seconds) {
+    oled::Overlay o(4000);
+    using K = oled::Overlay::Kind;
+    CHECK(o.current(0) == K::None);
+    o.show(K::Volume, 1000);
+    CHECK(o.current(4999) == K::Volume);
+    o.show(K::Volume, 4000);  // turned again: timer restarts
+    CHECK(o.current(7999) == K::Volume);
+    CHECK(o.current(8000) == K::None);
+    o.show(K::Balance, 9000);
+    CHECK(o.current(9001) == K::Balance);
+}
+
+TEST(oled_screens_render) {
+    Canvas c;
+    oled::SampleHistory h;
+    // Bursty, like real HDD activity: mostly quiet, with busy spells.
+    uint32_t seed = 12345;
+    for (int i = 0; i < 200; ++i) {
+        seed = seed * 1103515245u + 12345u;
+        const bool busy = (i / 9) % 3 == 0;
+        h.push(static_cast<uint8_t>(busy ? 120 + (seed >> 16) % 136 : (seed >> 16) % 40));
+    }
+    oled::drawGraph(c, "PB_MicroScience612", h);
+    preview(c, "activity");
+    CHECK(c.get(0, 0) && c.get(127, 9));            // title bar lit edge to edge
+    CHECK(litPixels(c, 0, oled::BODY_TOP, 127, 63) > 0);
+    CHECK(!c.get(0, oled::TITLE_H));                // gap under the title
+
+    oled::drawVolume(c, 65);
+    preview(c, "volume_65");
+    // 13 thick columns (5..65%), 7 thin: compare the first and last column.
+    CHECK(litPixels(c, 0, 60, 10, 63) > litPixels(c, 117, 60, 127, 63) - 4);
+    oled::drawVolume(c, 0);
+    preview(c, "volume_0");
+    oled::drawVolume(c, 100);
+    preview(c, "volume_100");
+
+    oled::drawBalance(c, 50);
+    preview(c, "balance_50");
+    oled::drawBalance(c, 20);
+    preview(c, "balance_20");
+    const int leftHalf = litPixels(c, 0, 18, 63, 40), rightHalf = litPixels(c, 64, 18, 127, 40);
+    CHECK(leftHalf > rightHalf);  // marker towards idle
+    oled::drawBalance(c, 100);
+    preview(c, "balance_100");
+
+    oled::TextConsole t;
+    t.write("[boot] HDD Synth MK5 C++ firmware v0.13.0\n[pack] Mark1\n[pack] spindown in RAM (3744 ms)\n");
+    t.write("[boot] spinup\n[run] idle/access looping\n[volume] 65%\n");
+    oled::drawConsole(c, t);
+    preview(c, "debug");
+    CHECK(litPixels(c, 0, 0, 127, 63) > 0);
+
+    oled::SampleHistory sc;
+    for (int i = 0; i < 128; ++i) sc.push(static_cast<uint8_t>(i < 20 ? i * 12 : 250 - (i - 20)));
+    oled::drawGraph(c, "Supercap 4.12V", sc);
+    preview(c, "supercap");
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -804,6 +950,13 @@ int main(int argc, char** argv) {
     RUN(levels_record_round_trip_and_corruption);
     RUN(levels_newest_slot_wins);
     RUN(levels_saver_debounces_two_seconds);
+    RUN(canvas_pixels_and_ssd1306_layout);
+    RUN(canvas_text);
+    RUN(oled_history_pushes_left);
+    RUN(oled_duty_meter);
+    RUN(oled_console_wraps_and_scrolls);
+    RUN(oled_overlay_holds_four_seconds);
+    RUN(oled_screens_render);
     RUN(ring_wraparound);
     RUN(ring_two_threads);
     RUN(mixer_unity_passthrough_and_end);

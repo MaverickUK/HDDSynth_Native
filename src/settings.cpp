@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 
+#include "console.h"
+
 namespace {
 
 float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
@@ -57,6 +59,18 @@ bool parseSettingsJson(const char* json, Settings& s) {
     if (doc["RANDOM_SAMPLE_PACK"].is<bool>()) s.randomSamplePack = doc["RANDOM_SAMPLE_PACK"];
     if (doc["ALWAYS_PLAY_JINGLE"].is<bool>()) s.alwaysPlayJingle = doc["ALWAYS_PLAY_JINGLE"];
     if (doc["DEMO_MODE"].is<bool>()) s.demoMode = doc["DEMO_MODE"];
+    if (doc["OLED_ENABLED"].is<bool>()) s.oledEnabled = doc["OLED_ENABLED"];
+    if (doc["OLED_MODE"].is<const char*>()) {
+        const char* m = doc["OLED_MODE"].as<const char*>();
+        if (!strcasecmp(m, "activity")) s.oledMode = OledMode::Activity;
+        else if (!strcasecmp(m, "supercap")) s.oledMode = OledMode::Supercap;
+        else if (!strcasecmp(m, "debug")) s.oledMode = OledMode::Debug;
+        else Console.printf("[settings] unknown OLED_MODE '%s', using activity\n", m);
+    }
+    if (doc["OLED_SAMPLE_MS"].is<int>()) {
+        const int ms = doc["OLED_SAMPLE_MS"].as<int>();
+        s.oledSampleMs = static_cast<uint32_t>(ms < 50 ? 50 : ms);  // faster than 50 ms is just noise
+    }
     if (doc["SAMPLE_PACK"].is<const char*>()) {
         strncpy(s.samplePack, doc["SAMPLE_PACK"].as<const char*>(), sizeof(s.samplePack) - 1);
     }
@@ -64,9 +78,9 @@ bool parseSettingsJson(const char* json, Settings& s) {
 }
 
 void printSettings(const Settings& s) {
-    Serial.printf("[settings] pack='%s' volume=%d%% balance=%d%% sim=%d spinup=%d spindown=%d idle=%d "
-                  "hold=%lums power_detect=%d random_pack=%d always_jingle=%d demo=%d save_levels=%d\n",
+    Console.printf("[settings] pack='%s' volume=%d%% balance=%d%% sim=%d spinup=%d spindown=%d idle=%d "
+                  "hold=%lums power_detect=%d random_pack=%d always_jingle=%d demo=%d save_levels=%d oled=%d\n",
                   s.samplePack, static_cast<int>(s.volume * 100 + 0.5f), static_cast<int>(s.balance * 100 + 0.5f), s.simulationMode, s.playSpinup, s.playSpindown,
                   s.playIdle, static_cast<unsigned long>(s.accessHoldMs), s.powerDetection, s.randomSamplePack,
-                  s.alwaysPlayJingle, s.demoMode, s.saveVolumeBalance);
+                  s.alwaysPlayJingle, s.demoMode, s.saveVolumeBalance, s.oledEnabled);
 }

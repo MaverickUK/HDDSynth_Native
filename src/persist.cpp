@@ -4,6 +4,8 @@
 #include <EEPROM.h>
 #include <string.h>
 
+#include "console.h"
+
 namespace persist {
 
 namespace {
@@ -20,9 +22,9 @@ bool same(const PersistedState& a, const PersistedState& b) {
 void begin() {
     EEPROM.begin(persistfmt::RECORD_BYTES);
     if (persistfmt::decode(EEPROM.getConstDataPtr(), live)) {
-        Serial.printf("[persist] pack '%s', jingle %s\n", live.desiredPack, live.jinglePlayed ? "played" : "not played");
+        Console.printf("[persist] pack '%s', jingle %s\n", live.desiredPack, live.jinglePlayed ? "played" : "not played");
     } else {
-        Serial.println("[persist] nothing saved yet, using defaults");
+        Console.println("[persist] nothing saved yet, using defaults");
     }
     onFlash = live;
 }
