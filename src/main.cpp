@@ -132,9 +132,12 @@ void samplePath(char* out, size_t len, const char* file) {
     snprintf(out, len, "/samples/%s/%s", pack, file);
 }
 
-uint16_t idleLevel() {
-    return settings.playIdle ? levelFromFloat(settings.volume * (1.0f - settings.balance)) : 0;
-}
+// The drive's own sound: spinup, idle and spindown all play at
+// volume x (1 - balance), as in the CircuitPython firmware (they share its
+// voice 0), so the handovers between them never change level. Independent of
+// PLAY_IDLE. The jingle is the exception: always full volume.
+uint16_t baseLevel() { return levelFromFloat(settings.volume * (1.0f - settings.balance)); }
+uint16_t idleLevel() { return settings.playIdle ? baseLevel() : 0; }
 uint16_t accessLevel(bool active) {
     return active ? levelFromFloat(settings.volume * settings.balance) : 0;
 }
@@ -213,7 +216,7 @@ bool armSpindown() {
 }
 
 bool startSpindownVoice() {
-    const uint16_t level = levelFromFloat(settings.volume);
+    const uint16_t level = baseLevel();
     if (spindownRam) return audio::startMemory(VOICE_SPINDOWN, spindownRam, spindownSamples, false, level);
     if (!spindownArmed && !armSpindown()) return false;
     spindownArmed = false;  // the primed ring is consumed by this start
@@ -669,7 +672,7 @@ void startSpinup() {
     samplePath(p, sizeof(p), "spinup.wav");
     if (settings.playSpinup && sd::openStream(streamSpinup, p, VOICE_SPINUP, &ringOneShot, false) &&
         sd::prime(streamSpinup) &&
-        audio::startStream(VOICE_SPINUP, &ringOneShot, levelFromFloat(settings.volume))) {
+        audio::startStream(VOICE_SPINUP, &ringOneShot, baseLevel())) {
         Console.println("[boot] spinup");
     }
     // Fill the loop rings while spinup plays, so RUN starts seamlessly.
@@ -768,7 +771,7 @@ void loop() {
             oled::service();
             savedlevels::service();
             controls::poll();  // pack changes wait for RUN; volume applies straight away
-            audio::setLevel(VOICE_SPINUP, levelFromFloat(settings.volume));
+            audio::setLevel(VOICE_SPINUP, baseLevel());
             beeps::service();
             powerTrace("spinup");
             if (power::lost()) enterSpindown();
@@ -794,7 +797,7 @@ void loop() {
             savedlevels::service();
             const controls::Action action = controls::poll();
             beeps::service();
-            audio::setLevel(VOICE_SPINDOWN, levelFromFloat(settings.volume));
+            audio::setLevel(VOICE_SPINDOWN, baseLevel());
             if (power::lost()) enterSpindown();
             else if (action == controls::Action::FactoryReset) factoryReset();
             else if (!audio::isPlaying(VOICE_SPINDOWN)) nextDemoPack();

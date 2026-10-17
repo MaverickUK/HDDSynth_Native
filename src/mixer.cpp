@@ -67,6 +67,19 @@ void mixBlock(Voice* voices, size_t voiceCount, int16_t* out, size_t frames) {
         Voice& v = voices[i];
         const uint8_t st = v.state.load(std::memory_order_acquire);
         if (st == VS_STOP_REQ) {
+            // Fade the voice out over this one block (8 ms) instead of cutting
+            // it dead, so a stop never clicks. A voice that never sounded
+            // (stopped before its first block, or at level 0) just goes idle.
+            const bool sounded = v.playGen.load(std::memory_order_acquire) == v.seenGen && v.curLevel != 0;
+            if (sounded) {
+                readSource(v, tmp, frames);
+                const int32_t from = v.curLevel;
+                for (size_t n = 0; n < frames; ++n) {
+                    const int32_t g = from - (from * int32_t(n + 1)) / int32_t(frames);
+                    acc[n] += (int32_t(tmp[n]) * g) >> 15;
+                }
+                v.curLevel = 0;
+            }
             v.state.store(VS_IDLE, std::memory_order_release);
             continue;
         }

@@ -121,7 +121,7 @@ default. For example:
 | `SAMPLE_PACK` | *(none)* | Pack to play (a folder name in `/samples`). Wins over the pack chosen with the action button. If it doesn't exist, the firmware beeps 5 times and carries on with another pack. |
 | `RANDOM_SAMPLE_PACK` | `false` | Pick a random pack at every boot, never the same one twice running. Overrides `SAMPLE_PACK`. |
 | `VOLUME_DEFAULT` | `0.5` | Starting volume, 0.0 to 1.0. If set, it is used at every boot, even over a saved volume. |
-| `BALANCE_DEFAULT` | `0.5` | Starting idle/access mix: 0.0 = idle only, 1.0 = access only. If set, it is used at every boot, even over a saved balance. |
+| `BALANCE_DEFAULT` | `0.5` | Starting idle/access mix: 0.0 = idle only, 1.0 = access only. Idle plays at volume × (1 − balance), access at volume × balance. The spinup and spindown play at the idle level, as in the CircuitPython firmware, so the hand-overs never change volume (and they're silent at 1.0). If set, it is used at every boot, even over a saved balance. |
 | `SAVE_VOLUME_BALANCE` | `false` | Remember the volume and balance when you change them (2 s after the last change), and use them at the next boot unless `VOLUME_DEFAULT`/`BALANCE_DEFAULT` is set. Saved on the SD card in `/state.bin`, so they go with the card. A factory reset clears them. *(New.)* |
 | `PLAY_SPINUP` | `true` | Play the spinup at boot. |
 | `PLAY_IDLE` | `true` | Play the idle loop. |

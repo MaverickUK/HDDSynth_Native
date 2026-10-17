@@ -6,8 +6,9 @@
 //               ring and change `loop`. Core 1 does not touch the voice.
 //   PLAYING     core 1 reads the source. Core 0 may only push into the ring,
 //               set `eof` and change `targetLevel`.
-//   STOP_REQ    core 0 asked core 1 to stop; core 1 moves it to IDLE at the
-//               start of its next block (<= one block, 8 ms).
+//   STOP_REQ    core 0 asked core 1 to stop; core 1 mixes one last block
+//               fading it out (no click), then moves it to IDLE (<= one
+//               block, 8 ms).
 //
 // Core 1 also moves PLAYING -> IDLE itself when a source ends. Every handover
 // is a release-store / acquire-load on `state`, so data written before the

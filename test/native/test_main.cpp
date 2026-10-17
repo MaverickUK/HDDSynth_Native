@@ -309,6 +309,25 @@ TEST(mixer_stop_request) {
     CHECK_EQ(out[0], 0);
 }
 
+TEST(mixer_stop_fades_out_over_one_block) {
+    Voice v[1];
+    std::vector<int16_t> loud(1000, 20000);
+    startMem(v[0], loud.data(), 1000, true, LEVEL_UNITY);
+    int16_t out[128];
+    mixBlock(v, 1, out, 128);  // sounding at full level
+    CHECK_EQ(out[127], 20000);
+    v[0].state = VS_STOP_REQ;
+    mixBlock(v, 1, out, 128);  // the stop: one block ramping down, no cliff
+    CHECK(out[0] > 19000);
+    bool falling = true;
+    for (int i = 1; i < 128; ++i) falling &= out[i] <= out[i - 1];
+    CHECK(falling);
+    CHECK(out[127] < 200);
+    CHECK_EQ(v[0].state.load(), VS_IDLE);
+    mixBlock(v, 1, out, 128);  // and silent after
+    CHECK_EQ(out[0], 0);
+}
+
 TEST(mixer_restart_rewinds) {
     Voice v[1];
     std::vector<int16_t> src(1000);
@@ -964,6 +983,7 @@ int main(int argc, char** argv) {
     RUN(mixer_levels_and_saturation);
     RUN(mixer_level_ramp_is_smooth);
     RUN(mixer_stop_request);
+    RUN(mixer_stop_fades_out_over_one_block);
     RUN(mixer_restart_rewinds);
     RUN(mixer_stream_underrun_and_eof);
     RUN(mixer_stream_two_threads_no_gaps);
