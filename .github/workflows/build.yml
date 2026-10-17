@@ -15,9 +15,9 @@ jobs:
     name: Host tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check out the sample packs (every WAV gets parsed)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: MaverickUK/HDDSynth_Samples
           path: samples
@@ -29,11 +29,11 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.platformio
           key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
@@ -60,7 +60,7 @@ jobs:
           mkdir dist
           cp .pio/build/mk5/firmware.uf2 "dist/hddsynth-mk5-v${{ steps.version.outputs.version }}.uf2"
           cp .pio/build/mk5_stream_test/firmware.uf2 "dist/hddsynth-mk5-v${{ steps.version.outputs.version }}-stream-test.uf2"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: firmware-v${{ steps.version.outputs.version }}
           path: dist/*.uf2
@@ -73,7 +73,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: firmware-v${{ needs.build.outputs.version }}
           path: dist
