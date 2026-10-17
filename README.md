@@ -97,9 +97,15 @@ spindowns.
 ```
 
 The layout and `settings.json` keys are the same as the CircuitPython
-firmware, so existing cards keep working. WAVs must be 16 kHz, mono,
-16-bit PCM. A pack is any folder in `/samples`; packs are used in
-alphabetical order.
+firmware, so existing cards keep working. A pack is any folder in
+`/samples` (name up to 63 characters); packs are used in alphabetical order.
+
+**WAV files:** 16 kHz, mono, 16-bit PCM. Any length: everything streams
+from the card, except a spindown of up to ~11 s, which is held in RAM (a
+longer one streams too; see [Where each sound plays from](#where-each-sound-plays-from)).
+Metadata that editors add before the audio (`bext`, `LIST`, markers) is
+fine, as long as the audio starts within the first 4 KB of the file. A file
+that breaks these rules is reported as a broken pack (4 low beeps).
 
 ### settings.json
 

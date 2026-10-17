@@ -103,6 +103,18 @@ TEST(wav_chunk_before_fmt) {
     CHECK(wavIsPlayable(info, 16000));
 }
 
+TEST(wav_large_metadata_fits_the_4k_header_read) {
+    // Editors can put several KB of metadata before the audio. The firmware
+    // reads cfg::WAV_HEADER_BYTES from the start of each WAV (sd_streamer).
+    WavBuilder w; w.riff(); w.chunk("LIST", 3000); w.fmt(1, 1, 16000, 16); w.data(50000, 50000);
+    WavInfo info;
+    CHECK(parseWavHeader(w.b.data(), cfg::WAV_HEADER_BYTES, w.b.size(), info) == WavError::Ok);
+    CHECK_EQ(info.dataOffset, 12u + 8 + 3000 + 24 + 8);
+    CHECK(wavIsPlayable(info, 16000));
+    // The old 1 KB read couldn't reach the data chunk.
+    CHECK(parseWavHeader(w.b.data(), 1024, w.b.size(), info) == WavError::Truncated);
+}
+
 TEST(wav_bogus_data_length_clamped) {
     WavBuilder w; w.riff(); w.fmt(1, 1, 16000, 16); w.data(101, 0xFFFFFFFF);
     WavInfo info;
@@ -950,6 +962,7 @@ int main(int argc, char** argv) {
     RUN(wav_basic_pcm);
     RUN(wav_list_chunk_and_odd_padding);
     RUN(wav_chunk_before_fmt);
+    RUN(wav_large_metadata_fits_the_4k_header_read);
     RUN(wav_bogus_data_length_clamped);
     RUN(wav_rejects);
     RUN(wav_real_sample_packs);

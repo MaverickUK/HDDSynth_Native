@@ -5,6 +5,9 @@
 #include <SdFat.h>
 #include <hardware/gpio.h>
 
+#include <memory>
+#include <new>
+
 #include "config.h"
 #include "console.h"
 
@@ -62,6 +65,22 @@ bool mount() {
                       card.sdErrorCode(), card.sdErrorData());
     }
     return mounted;
+}
+
+// Read the start of a WAV and parse its header. The data chunk has to begin
+// within cfg::WAV_HEADER_BYTES: 4 KB leaves room for the metadata chunks
+// (bext, LIST, markers) that editors put before the audio. The buffer is
+// borrowed from the heap just for this, not kept: a permanent 4 KB would cut
+// into the RAM a large spindown needs, and it's too big for core 0's stack.
+WavError readWavInfo(FsFile& f, WavInfo& info) {
+    std::unique_ptr<uint8_t[]> header(new (std::nothrow) uint8_t[cfg::WAV_HEADER_BYTES]);
+    if (!header) {
+        Console.println("[sd] no memory to read a WAV header");
+        return WavError::Truncated;
+    }
+    f.seekSet(0);
+    const int n = f.read(header.get(), cfg::WAV_HEADER_BYTES);
+    return parseWavHeader(header.get(), n > 0 ? static_cast<size_t>(n) : 0, static_cast<uint32_t>(f.fileSize()), info);
 }
 
 bool seekTo(Stream& s, FsFile& f) {
@@ -215,9 +234,7 @@ bool openStream(Stream& s, const char* path, VoiceId voice, SampleRing* ring, bo
         Console.printf("[sd] cannot open %s\n", path);
         return false;
     }
-    uint8_t header[1024];
-    const int n = f.read(header, sizeof(header));
-    const WavError e = parseWavHeader(header, n > 0 ? n : 0, static_cast<uint32_t>(f.fileSize()), s.info);
+    const WavError e = readWavInfo(f, s.info);
     if (e != WavError::Ok || !wavIsPlayable(s.info, cfg::SAMPLE_RATE)) {
         Console.printf("[sd] %s: %s (fmt %u, %u ch, %lu Hz, %u bit)\n", path,
                       e == WavError::Ok ? "wrong format" : wavErrorName(e), s.info.format,
@@ -279,11 +296,8 @@ bool loadToRam(const char* path, int16_t*& data, uint32_t& samples) {
     samples = 0;
     FsFile f;
     if (!f.open(path, O_RDONLY)) return false;
-    uint8_t header[1024];
-    const int n = f.read(header, sizeof(header));
     WavInfo info;
-    if (parseWavHeader(header, n > 0 ? n : 0, static_cast<uint32_t>(f.fileSize()), info) != WavError::Ok ||
-        !wavIsPlayable(info, cfg::SAMPLE_RATE)) {
+    if (readWavInfo(f, info) != WavError::Ok || !wavIsPlayable(info, cfg::SAMPLE_RATE)) {
         return false;
     }
     if (rp2040.getFreeHeap() < static_cast<int>(info.dataBytes + cfg::HEAP_RESERVE_BYTES)) {
