@@ -168,17 +168,29 @@ TEST(wav_real_sample_packs) {
         CHECK(ok);
         ++files;
     };
-    DIR* root = opendir(samplesDir.c_str());
+    // HDDSynth_Samples mirrors the SD card: packs in samples/<pack>/, the
+    // jingle at the root. (Older checkouts had the packs at the top level.)
+    std::string packsDir = samplesDir + "/samples";
+    DIR* root = opendir(packsDir.c_str());
+    if (!root) {
+        packsDir = samplesDir;
+        root = opendir(packsDir.c_str());
+    }
     CHECK(root != nullptr);
     if (!root) return;
+    int packs = 0;
     while (dirent* pack = readdir(root)) {
         if (pack->d_name[0] == '.') continue;
+        const int before = files;
         for (const char* name : {"spinup.wav", "idle.wav", "access.wav", "spindown.wav"}) {
-            checkWav(samplesDir + "/" + pack->d_name + "/" + name);
+            checkWav(packsDir + "/" + pack->d_name + "/" + name);
         }
+        if (files > before) ++packs;
     }
     closedir(root);
     checkWav(samplesDir + "/jingle.wav");  // played from the SD card root on first boot
+    std::printf("  %d packs found\n", packs);
+    CHECK(packs > 0);  // a layout change mustn't silently skip every pack
     std::printf("  %d sample files parsed\n", files);
     CHECK(files > 0);
 }
