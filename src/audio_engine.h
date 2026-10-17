@@ -36,6 +36,14 @@ void setLevel(VoiceId id, uint16_t level);
 void markEndOfStream(VoiceId id);
 Voice& voice(VoiceId id);
 
+// Output sample rate, set from the pack (all of its WAVs share one rate).
+// Core 1 applies it before its next block; this waits (bounded) for that and
+// returns false if it didn't happen within 100 ms. Change it only with
+// nothing playing that's still at the old rate (beeps are made at whatever
+// rate is current when they start).
+bool setSampleRate(uint32_t hz);
+uint32_t sampleRate();
+
 // After the spindown, while waiting on the supercap: stop I2S and park core
 // 1 asleep until the next reboot (there is no way back). Waits for core 1 to
 // confirm; returns false if it didn't within 100 ms. Nothing may play after.

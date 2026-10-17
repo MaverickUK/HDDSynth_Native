@@ -195,7 +195,9 @@ void waitPowerIdle() {
     powerlog::service();
 }
 
-uint32_t samplesToMs(uint32_t samples) { return samples * 1000 / cfg::SAMPLE_RATE; }
+uint32_t packRate = cfg::DEFAULT_SAMPLE_RATE;  // sample rate of the loaded pack (the output runs at it)
+
+uint32_t samplesToMs(uint32_t samples) { return static_cast<uint32_t>(uint64_t(samples) * 1000 / packRate); }
 
 // Spindown: keep it in RAM if it fits, otherwise keep a primed stream on the
 // one-shot ring so it can start instantly. Requires the spinup voice idle.
@@ -400,9 +402,44 @@ void handleSerial() {
 
 // Open idle/access for `pack` and load its spindown into RAM (or leave it to
 // stream; enterRun() arms it). Logs and returns false if the pack is unusable.
+// All of a pack's WAVs must share one sample rate: the audio output runs at
+// that rate while the pack is loaded. Checks the files that exist (a missing
+// one is reported where it's needed) and sets packRate.
+bool checkPackRate() {
+    static const char* const files[] = {"idle.wav", "access.wav", "spinup.wav", "spindown.wav"};
+    const char* first = nullptr;
+    uint32_t rate = 0;
+    char p[128];
+    for (const char* name : files) {
+        samplePath(p, sizeof(p), name);
+        WavInfo w;
+        if (!sd::wavInfo(p, w)) continue;
+        if (!wavIsPlayable(w)) {
+            Console.printf("[pack] %s: %s is %lu Hz, %u channel(s), %u bit; needs mono 16-bit at 16000, 22050, "
+                           "32000, 44100 or 48000 Hz\n",
+                           pack, name, static_cast<unsigned long>(w.sampleRate), w.channels, w.bitsPerSample);
+            return false;
+        }
+        if (!first) {
+            first = name;
+            rate = w.sampleRate;
+        } else if (w.sampleRate != rate) {
+            Console.printf("[pack] %s: %s is %lu Hz but %s is %lu Hz; all of a pack's WAVs must share one rate\n",
+                           pack, name, static_cast<unsigned long>(w.sampleRate), first, static_cast<unsigned long>(rate));
+            return false;
+        }
+    }
+    if (rate) packRate = rate;
+    return true;
+}
+
 bool loadPack() {
     Console.printf("[pack] %s\n", pack);
     oled::setPack(pack);
+    if (!checkPackRate()) return false;
+    // Nothing is playing at this point (boot, pack change, demo hand-over).
+    audio::setSampleRate(packRate);
+    Console.printf("[pack] %lu Hz\n", static_cast<unsigned long>(packRate));
     char p[128];
     samplePath(p, sizeof(p), "idle.wav");
     const bool idleOk = sd::openStream(streamIdle, p, VOICE_IDLE, &ringIdle, true);
@@ -645,8 +682,13 @@ bool startJingle() {
         Console.println("[boot] no /jingle.wav, skipping the jingle");
         return false;
     }
-    if (!sd::prime(streamSpinup) || !audio::startStream(VOICE_SPINUP, &ringOneShot, LEVEL_UNITY)) return false;
-    Console.println("[boot] jingle");
+    // The jingle has its own sample rate (it isn't part of a pack).
+    audio::setSampleRate(streamSpinup.info.sampleRate);
+    if (!sd::prime(streamSpinup) || !audio::startStream(VOICE_SPINUP, &ringOneShot, LEVEL_UNITY)) {
+        audio::setSampleRate(packRate);
+        return false;
+    }
+    Console.printf("[boot] jingle (%lu Hz)\n", static_cast<unsigned long>(streamSpinup.info.sampleRate));
     jingleLevel.reset();
     jingleStartMs = jingleNextLightMs = millis();
     return true;
@@ -655,6 +697,7 @@ bool startJingle() {
 void finishJingle() {
     io::rgbOff();
     sd::closeStream(streamSpinup);
+    audio::setSampleRate(packRate);  // back to the pack's rate for the spinup
     if (!persist::state().jinglePlayed) {
         persist::state().jinglePlayed = true;
         // Nothing is playing between the jingle and the spinup, so this is a

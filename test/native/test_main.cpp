@@ -85,7 +85,7 @@ TEST(wav_basic_pcm) {
     CHECK(parseWavHeader(w.b.data(), w.b.size(), w.b.size(), info) == WavError::Ok);
     CHECK_EQ(info.dataOffset, 44u);
     CHECK_EQ(info.dataBytes, 1000u);
-    CHECK(wavIsPlayable(info, 16000));
+    CHECK(wavIsPlayable(info));
 }
 
 TEST(wav_list_chunk_and_odd_padding) {
@@ -100,7 +100,7 @@ TEST(wav_chunk_before_fmt) {
     WavBuilder w; w.riff(); w.chunk("bext", 600); w.fmt(1, 1, 16000, 16); w.data(32, 32);
     WavInfo info;
     CHECK(parseWavHeader(w.b.data(), w.b.size(), w.b.size(), info) == WavError::Ok);
-    CHECK(wavIsPlayable(info, 16000));
+    CHECK(wavIsPlayable(info));
 }
 
 TEST(wav_large_metadata_fits_the_4k_header_read) {
@@ -110,7 +110,7 @@ TEST(wav_large_metadata_fits_the_4k_header_read) {
     WavInfo info;
     CHECK(parseWavHeader(w.b.data(), cfg::WAV_HEADER_BYTES, w.b.size(), info) == WavError::Ok);
     CHECK_EQ(info.dataOffset, 12u + 8 + 3000 + 24 + 8);
-    CHECK(wavIsPlayable(info, 16000));
+    CHECK(wavIsPlayable(info));
     // The old 1 KB read couldn't reach the data chunk.
     CHECK(parseWavHeader(w.b.data(), 1024, w.b.size(), info) == WavError::Truncated);
 }
@@ -148,12 +148,22 @@ TEST(wav_rejects) {
     {
         WavBuilder w; w.riff(); w.fmt(1, 2, 16000, 16); w.data(16, 16);  // stereo
         CHECK(parseWavHeader(w.b.data(), w.b.size(), w.b.size(), info) == WavError::Ok);
-        CHECK(!wavIsPlayable(info, 16000));
+        CHECK(!wavIsPlayable(info));
+    }
+    for (uint32_t rate : {16000u, 22050u, 32000u, 44100u, 48000u}) {  // supported rates
+        WavBuilder w; w.riff(); w.fmt(1, 1, rate, 16); w.data(16, 16);
+        CHECK(parseWavHeader(w.b.data(), w.b.size(), w.b.size(), info) == WavError::Ok);
+        CHECK(wavIsPlayable(info));
+    }
+    for (uint32_t rate : {8000u, 11025u, 24000u, 96000u}) {  // unsupported rates
+        WavBuilder w; w.riff(); w.fmt(1, 1, rate, 16); w.data(16, 16);
+        CHECK(parseWavHeader(w.b.data(), w.b.size(), w.b.size(), info) == WavError::Ok);
+        CHECK(!wavIsPlayable(info));
     }
     {
-        WavBuilder w; w.riff(); w.fmt(1, 1, 22050, 16); w.data(16, 16);  // wrong rate
+        WavBuilder w; w.riff(); w.fmt(1, 1, 22050, 24); w.data(18, 18);  // 24-bit
         CHECK(parseWavHeader(w.b.data(), w.b.size(), w.b.size(), info) == WavError::Ok);
-        CHECK(!wavIsPlayable(info, 16000));
+        CHECK(!wavIsPlayable(info));
     }
 }
 
@@ -175,7 +185,7 @@ TEST(wav_real_sample_packs) {
         f.read(reinterpret_cast<char*>(head.data()), head.size());
         WavInfo info;
         const WavError e = parseWavHeader(head.data(), static_cast<size_t>(f.gcount()), size, info);
-        const bool ok = e == WavError::Ok && wavIsPlayable(info, 16000) && info.dataOffset + info.dataBytes <= size;
+        const bool ok = e == WavError::Ok && wavIsPlayable(info) && info.dataOffset + info.dataBytes <= size;
         if (!ok) std::printf("  FAIL %s: %s\n", p.c_str(), wavErrorName(e));
         CHECK(ok);
         ++files;
@@ -636,6 +646,15 @@ TEST(beep_timing_matches_python_profiles) {
     CHECK_EQ(makeBeep(16000, 1200, 0, 100, BeepWave::Sine).totalSamples, 0u);
 }
 
+TEST(beep_lasts_the_same_time_at_any_rate) {
+    // Beeps are made at the pack's output rate; their timing must not change.
+    const BeepPattern a = makeBeep(16000, 1200, 3, 100, BeepWave::Triangle);
+    const BeepPattern b = makeBeep(48000, 1200, 3, 100, BeepWave::Triangle);
+    const BeepPattern c = makeBeep(44100, 1200, 3, 100, BeepWave::Triangle);
+    CHECK_EQ(b.totalSamples, 3 * a.totalSamples);
+    CHECK_EQ(a.totalSamples * 1000 / 16000, c.totalSamples * 1000 / 44100);  // same length in ms
+}
+
 TEST(beep_envelope_fades_in_and_out) {
     beepInit();
     const BeepPattern p = makeBeep(16000, 400, 1, 100, BeepWave::Sine);
@@ -983,6 +1002,7 @@ int main(int argc, char** argv) {
     RUN(persist_rejects_blank_and_corrupt);
     RUN(persist_long_name_is_truncated_and_terminated);
     RUN(beep_timing_matches_python_profiles);
+    RUN(beep_lasts_the_same_time_at_any_rate);
     RUN(beep_envelope_fades_in_and_out);
     RUN(beep_led_flashes_once_per_note);
     RUN(beep_triangle_shape);

@@ -76,7 +76,13 @@ WavError parseWavHeader(const uint8_t* buf, size_t len, uint32_t fileSize, WavIn
     return WavError::Truncated;
 }
 
-bool wavIsPlayable(const WavInfo& w, uint32_t rate) {
+bool wavRateSupported(uint32_t rate) {
+    for (uint32_t r : WAV_SUPPORTED_RATES)
+        if (r == rate) return true;
+    return false;
+}
+
+bool wavIsPlayable(const WavInfo& w) {
     return w.format == WAVE_FORMAT_PCM && w.channels == 1 && w.bitsPerSample == 16 &&
-           w.sampleRate == rate && w.dataBytes > 0;
+           wavRateSupported(w.sampleRate) && w.dataBytes > 0;
 }

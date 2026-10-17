@@ -30,5 +30,11 @@ const char* wavErrorName(WavError e);
 // normal files.
 WavError parseWavHeader(const uint8_t* buf, size_t len, uint32_t fileSize, WavInfo& out);
 
-// True if the file matches what the mixer plays: PCM, mono, 16-bit, `rate` Hz.
-bool wavIsPlayable(const WavInfo& w, uint32_t rate);
+// Sample rates the firmware plays: the audio output switches to the pack's
+// rate (all of a pack's WAVs must share one; see loadPack() in main.cpp).
+constexpr uint32_t WAV_SUPPORTED_RATES[] = {16000, 22050, 32000, 44100, 48000};
+bool wavRateSupported(uint32_t rate);
+
+// True if the file matches what the mixer plays: PCM, mono, 16-bit, at a
+// supported rate.
+bool wavIsPlayable(const WavInfo& w);

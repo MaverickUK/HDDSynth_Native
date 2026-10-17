@@ -16,6 +16,10 @@ std::atomic<bool> underflowLatched{false};
 std::atomic<uint16_t> lastBlockPeak{0};
 std::atomic<bool> parkRequested{false};  // core 0 -> core 1: stop audio for good
 std::atomic<bool> parked{false};         // core 1 -> core 0: I2S stopped, core 1 asleep
+// Output sample rate: core 0 requests, core 1 applies it to its own I2S
+// between blocks and confirms.
+std::atomic<uint32_t> requestedRate{cfg::DEFAULT_SAMPLE_RATE};
+std::atomic<uint32_t> appliedRate{cfg::DEFAULT_SAMPLE_RATE};
 
 constexpr uint32_t STOP_TIMEOUT_MS = 100;  // core 1 acks within one 8 ms block
 
@@ -31,7 +35,7 @@ void core1Setup() {
     // One I2S buffer word = one stereo frame (16-bit L + 16-bit R).
     i2s.setBuffers(cfg::I2S_BUFFERS, cfg::MIX_BLOCK_FRAMES);
     // begin() on core 1 so the DMA interrupt is serviced here, away from SD/USB work.
-    i2s.begin(cfg::SAMPLE_RATE);
+    i2s.begin(cfg::DEFAULT_SAMPLE_RATE);
 }
 
 void core1Loop() {
@@ -45,6 +49,12 @@ void core1Loop() {
         }
         __wfe();
         return;
+    }
+
+    const uint32_t rate = requestedRate.load(std::memory_order_acquire);
+    if (rate != appliedRate.load(std::memory_order_relaxed)) {
+        i2s.setFrequency(static_cast<int>(rate));  // new I2S clock divider; queued blocks just play at the new rate
+        appliedRate.store(rate, std::memory_order_release);
     }
 
     static int16_t mono[cfg::MIX_BLOCK_FRAMES];
@@ -76,6 +86,17 @@ void core1Loop() {
 }
 
 Voice& voice(VoiceId id) { return voices[id]; }
+
+bool setSampleRate(uint32_t hz) {
+    requestedRate.store(hz, std::memory_order_release);
+    const uint32_t t0 = millis();
+    while (appliedRate.load(std::memory_order_acquire) != hz) {
+        if (millis() - t0 > STOP_TIMEOUT_MS) return false;
+    }
+    return true;
+}
+
+uint32_t sampleRate() { return requestedRate.load(std::memory_order_relaxed); }
 
 bool shutdownForLowPower() {
     parkRequested.store(true, std::memory_order_release);

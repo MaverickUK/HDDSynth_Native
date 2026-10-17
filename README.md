@@ -65,9 +65,20 @@ streaming them keeps RAM free for the spindown.
 **When it fits:** the spindown is loaded only if at least 32 KB of memory
 is still free afterwards (`HEAP_RESERVE_BYTES`, a margin for everything
 else). About 398 KB is free before it loads, so the largest spindown that
-fits is about 366 KB, roughly 11.4 s (16 kHz mono 16-bit is 32 KB per
-second). Every current pack fits; the largest, `PB_MicroScience612`
-(11.0 s), leaves 13 KB to spare. The boot log says which happened:
+fits is about 366 KB. How long that is depends on the pack's sample rate
+(mono 16-bit is 2 bytes per sample):
+
+| Pack sample rate | Data per second | Longest spindown in RAM | Stream buffer cover |
+|---|---|---|---|
+| 16 kHz | 32 KB | ~11.4 s | ~1.0 s |
+| 22.05 kHz | 44 KB | ~8.3 s | ~0.74 s |
+| 32 kHz | 64 KB | ~5.7 s | ~0.51 s |
+| 44.1 kHz | 88 KB | ~4.1 s | ~0.37 s |
+| 48 kHz | 96 KB | ~3.8 s | ~0.34 s |
+
+("Stream buffer cover" is how long each streamed sound can ride out a
+slow SD read.) Every current pack is 16 kHz and fits; the largest,
+`PB_MicroScience612` (11.0 s), leaves 13 KB to spare. The boot log says which happened:
 `spindown in RAM (… ms)` or `spindown will stream from SD`.
 
 **If it doesn't fit:** once running, the one-shot buffer is kept
@@ -100,9 +111,15 @@ The layout and `settings.json` keys are the same as the CircuitPython
 firmware, so existing cards keep working. A pack is any folder in
 `/samples` (name up to 63 characters); packs are used in alphabetical order.
 
-**WAV files:** 16 kHz, mono, 16-bit PCM. Any length: everything streams
-from the card, except a spindown of up to ~11 s, which is held in RAM (a
-longer one streams too; see [Where each sound plays from](#where-each-sound-plays-from)).
+**WAV files:** mono, 16-bit PCM at **16000, 22050, 32000, 44100 or 48000
+Hz**. All four of a pack's WAVs must use the same rate (the audio output
+switches to it when the pack loads); a pack that mixes rates is reported as
+broken, and the log names the mismatched files. The jingle may use any of
+those rates. Higher rates sound crisper but cost RAM and SD bandwidth: the
+spindown that fits in RAM gets shorter (from ~11 s at 16 kHz to ~4 s at 48
+kHz; see the table under [Where each sound plays from](#where-each-sound-plays-from)).
+22.05 or 32 kHz gets most of the benefit through a small speaker. Any
+length otherwise: everything else streams from the card.
 Metadata that editors add before the audio (`bext`, `LIST`, markers) is
 fine, as long as the audio starts within the first 4 KB of the file. A file
 that breaks these rules is reported as a broken pack (4 low beeps).

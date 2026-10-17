@@ -30,7 +30,7 @@ constexpr uint8_t PIN_SUPERCAP_ADC  = 27;  // ADC1, via 22k/22k divider
 constexpr uint8_t PIN_POWER_FLT     = 28;  // eFuse /FLT, open drain, external pull-up. LOW = fault
 
 // ---- Audio ----
-constexpr uint32_t SAMPLE_RATE      = 16000;
+constexpr uint32_t DEFAULT_SAMPLE_RATE = 16000;  // output rate at boot; each pack sets its own (wav.h lists them)
 constexpr size_t   MIX_BLOCK_FRAMES = 128;   // 8 ms per mix block
 constexpr size_t   I2S_BUFFERS      = 6;     // 6 x 8 ms = 48 ms output latency
 constexpr size_t   RING_SAMPLES     = 16384; // ~1.02 s of audio per streamed voice (32 KB)

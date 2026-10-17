@@ -235,7 +235,7 @@ bool openStream(Stream& s, const char* path, VoiceId voice, SampleRing* ring, bo
         return false;
     }
     const WavError e = readWavInfo(f, s.info);
-    if (e != WavError::Ok || !wavIsPlayable(s.info, cfg::SAMPLE_RATE)) {
+    if (e != WavError::Ok || !wavIsPlayable(s.info)) {
         Console.printf("[sd] %s: %s (fmt %u, %u ch, %lu Hz, %u bit)\n", path,
                       e == WavError::Ok ? "wrong format" : wavErrorName(e), s.info.format,
                       s.info.channels, static_cast<unsigned long>(s.info.sampleRate), s.info.bitsPerSample);
@@ -297,7 +297,7 @@ bool loadToRam(const char* path, int16_t*& data, uint32_t& samples) {
     FsFile f;
     if (!f.open(path, O_RDONLY)) return false;
     WavInfo info;
-    if (readWavInfo(f, info) != WavError::Ok || !wavIsPlayable(info, cfg::SAMPLE_RATE)) {
+    if (readWavInfo(f, info) != WavError::Ok || !wavIsPlayable(info)) {
         return false;
     }
     if (rp2040.getFreeHeap() < static_cast<int>(info.dataBytes + cfg::HEAP_RESERVE_BYTES)) {
@@ -345,6 +345,15 @@ bool nextPackName(const char* after, char* out, size_t outLen) {
 }
 
 bool fileExists(const char* path) { return mounted && card.exists(path); }
+
+bool wavInfo(const char* path, WavInfo& info) {
+    if (!mounted) return false;
+    FsFile f;
+    if (!f.open(path, O_RDONLY)) return false;
+    const bool ok = readWavInfo(f, info) == WavError::Ok;
+    f.close();
+    return ok;
+}
 
 bool packExists(const char* name) {
     if (!mounted || !name || !name[0]) return false;

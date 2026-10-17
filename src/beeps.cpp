@@ -41,8 +41,8 @@ Profile profileFor(Type t) {
     return {PITCH_LOW, 1, LENGTH_SHORT_MS, BeepWave::Sine, true};
 }
 
-BeepPattern makePattern(const Profile& p) {
-    return makeBeep(cfg::SAMPLE_RATE, p.pitchHz, p.count, p.lengthMs, p.wave);
+BeepPattern makePattern(const Profile& p, uint32_t sampleRate) {
+    return makeBeep(sampleRate, p.pitchHz, p.count, p.lengthMs, p.wave);
 }
 
 void colour(bool error) {
@@ -52,13 +52,14 @@ void colour(bool error) {
 
 // Read by core 1 while the beep voice plays; only rewritten after stopping it.
 BeepPattern pattern;
+uint32_t patternRate = cfg::DEFAULT_SAMPLE_RATE;  // the output rate the pattern was made for
 bool playing = false;
 bool error = false;
 uint32_t startMs = 0;
 bool ledLit = false;
 
 uint32_t elapsedSamples() {
-    return static_cast<uint32_t>(static_cast<uint64_t>(millis() - startMs) * cfg::SAMPLE_RATE / 1000);
+    return static_cast<uint32_t>(static_cast<uint64_t>(millis() - startMs) * patternRate / 1000);
 }
 
 } // namespace
@@ -66,7 +67,8 @@ uint32_t elapsedSamples() {
 void play(Type t) {
     const Profile p = profileFor(t);
     audio::stop(VOICE_BEEP);  // never rewrite the pattern under core 1
-    pattern = makePattern(p);
+    patternRate = audio::sampleRate();  // made at the pack's rate, whatever it is
+    pattern = makePattern(p, patternRate);
     error = p.error;
     startMs = millis();
     playing = audio::startBeep(VOICE_BEEP, &pattern, levelFromFloat(BEEP_LEVEL));
@@ -80,7 +82,7 @@ bool service() {
     const uint32_t n = elapsedSamples();
     // Done once the voice has played it out; the margin covers I2S latency,
     // and makes sure a wait can never hang on a voice that didn't finish.
-    const uint32_t margin = cfg::SAMPLE_RATE / 2;
+    const uint32_t margin = patternRate / 2;
     if (n >= pattern.totalSamples && (audio::isIdle(VOICE_BEEP) || n >= pattern.totalSamples + margin)) {
         playing = false;
         io::rgbOff();
@@ -105,10 +107,11 @@ void waitDone(void (*idle)()) {
 }
 
 bool errorLedOn(Type t, uint32_t nowMs) {
-    const BeepPattern p = makePattern(profileFor(t));
-    const uint32_t cycleMs = p.totalSamples * 1000 / cfg::SAMPLE_RATE + ERROR_REPEAT_MS;
-    const uint32_t n = static_cast<uint32_t>(static_cast<uint64_t>(nowMs % cycleMs) * cfg::SAMPLE_RATE / 1000);
-    return beepNoteHeld(p, n);
+    // Timing only, so lay the pattern out in 1 ms units (a "1000 Hz rate"):
+    // a sample index is then simply a millisecond.
+    const BeepPattern p = makePattern(profileFor(t), 1000);
+    const uint32_t cycleMs = p.totalSamples + ERROR_REPEAT_MS;
+    return beepNoteHeld(p, nowMs % cycleMs);
 }
 
 } // namespace beeps
