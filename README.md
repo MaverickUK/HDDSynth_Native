@@ -4,23 +4,20 @@ Native C++ firmware for the [HDD Synth](https://github.com/MaverickUK/HDDSynth) 
 
 ## Status
 
-A dual-core C++ firmware for the MK5 board (RP2354A), replacing the
+A dual-core C++ firmware for the MK5 HDD Synth (RP2354A), replacing the
 CircuitPython firmware. It has passed hardware testing (steady state,
 stress, SD card removal, simulated power loss, every pack on the test card)
 and has feature parity with the CircuitPython firmware, plus a few extras.
-Real power-cut testing is unfinished: the first cut worked, then the test
-board's supercap stopped charging (a hardware issue, see CLAUDE.md).
 
 - SD-streamed spinup, idle and access; spindown from RAM (or SD if it is
   too big); power-loss spindown from the supercap.
 - Rotary encoder volume / balance, action button (next pack, factory
   reset), beeps with RGB LED flashes, saved pack choice, first-boot jingle,
   `RANDOM_SAMPLE_PACK`.
-- New here: demo mode, a rainbow light show during the jingle, a
+- Demo mode, a rainbow light show during the jingle, a
   power-loss log on the SD card, and recovery from SD card removal without
   a reboot.
-
-Not done: the OLED display (to be specified).
+- OLED display support
 
 ## Architecture
 
@@ -293,7 +290,7 @@ release commit is tagged `vX.Y.Z`.
 
 While the version is `0.y.z`, anything may change between minor versions.
 
-### Unit tests (run on your Mac, no hardware)
+### Unit tests (runs locally, not on HDD Synth hardware)
 
 ```sh
 test/run_native_tests.sh ../HDDSynth_Samples   # optional: path to sample packs
