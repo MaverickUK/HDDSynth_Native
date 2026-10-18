@@ -246,13 +246,13 @@ bool openStream(Stream& s, const char* path, VoiceId voice, SampleRing* ring, bo
     return true;
 }
 
-bool prime(Stream& s) {
+bool prime(Stream& s, uint32_t startByte) {
     const int slot = slotOf(s);
     if (!mounted || slot < 0 || !s.open || !audio::isIdle(s.voice)) return false;
 
     s.ring->reset();
     audio::voice(s.voice).eof.store(false, std::memory_order_relaxed);
-    s.pos = 0;
+    s.pos = startByte < s.info.dataBytes ? startByte & ~1u : 0;
     if (!seekTo(s, files[slot])) return false;
     s.feeding = true;
     while (feedOnce(s, slot)) {

@@ -187,6 +187,11 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   with resampled packs at 22.05/32/48 kHz (streamed spindown at 48 kHz kept
   `under=0`, min ring 320 ms of 340), a mixed-rate pack rejected by name, and
   a WAV with 3 KB of metadata loading.
+- Access loop randomised: it plays continuously at level 0 between bursts
+  (as in Python), and 50 ms after each burst ends (`cfg::ACCESS_JUMP_QUIET_MS`)
+  `jumpAccess()` re-primes it from a random point (~20 ms of SD reads).
+  Prompted by a PC with a burst every ~10 s against ~10 s loops: every
+  burst sounded like the loop's start. Verified 2026-10-18 (demo mode).
 - Jingle light show: while the jingle plays, the RGB LED cycles the rainbow
   (`cfg::JINGLE_RAINBOW_MS`) and its brightness follows the loudness. Core 1
   publishes each mixed block's peak (`audio::outputPeak()`); core 0 smooths

@@ -37,7 +37,8 @@ bool cardOk();                      // false while the card is down
 // Open a WAV for streaming into `ring` for `voice`. Validates the format.
 bool openStream(Stream& s, const char* path, VoiceId voice, SampleRing* ring, bool loop);
 // Rewind and fill the ring before playback. The voice must be idle.
-bool prime(Stream& s);
+// `startByte` (rounded down to a whole sample) starts it part-way through.
+bool prime(Stream& s, uint32_t startByte = 0);
 // Top up every feeding stream. Call often from loop(); never blocks for long.
 void pump();
 void closeStream(Stream& s);

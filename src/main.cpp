@@ -83,6 +83,13 @@ uint32_t spindownSamples = 0;
 bool spindownArmed = false;  // ready to play instantly (RAM, or primed stream)
 
 bool lastAccess = false;
+// The access loop plays all the time and activity only changes its level
+// (as in the CircuitPython firmware). Once a burst ends and the voice is
+// silent, its loop is moved to a random point, so the next burst never
+// picks up where the last left off: regular activity (e.g. a burst every
+// 10 s) would otherwise land at the same point of a ~10 s loop each time.
+uint32_t accessOffMs = 0;
+bool accessJumpPending = false;
 bool stressOn = false;
 uint32_t stressNextMs = 0;
 uint32_t stressSpindownStopMs = 0;
@@ -765,9 +772,29 @@ void enterSpindown() {
     state = State::Spindown;
 }
 
+// Move the (silent) access loop to a random point. Refilling its ring takes
+// ~20 ms of SD reads, all during the quiet after a burst.
+void jumpAccess() {
+    if (!audio::stop(VOICE_ACCESS)) return;  // silent: its level is already 0
+    const uint32_t frames = streamAccess.info.dataBytes / 2;
+    const uint32_t frame = frames ? static_cast<uint32_t>(random(frames)) : 0;
+    if (!sd::prime(streamAccess, frame * 2) || !audio::startStream(VOICE_ACCESS, &ringAccess, 0)) {
+        Console.println("[access] couldn't move the access loop");
+    }
+}
+
 void runStep() {
     const bool active = io::activity();
     const bool beepEnded = beeps::service();  // a beep owns the RGB LED while it plays
+    if (lastAccess && !active) {
+        accessOffMs = millis();
+        accessJumpPending = true;
+    }
+    if (active) accessJumpPending = false;
+    if (!active && accessJumpPending && millis() - accessOffMs >= cfg::ACCESS_JUMP_QUIET_MS) {
+        accessJumpPending = false;
+        jumpAccess();
+    }
     if (active != lastAccess || beepEnded) {
         lastAccess = active;
         io::hddLed(active);

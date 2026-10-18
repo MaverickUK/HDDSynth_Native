@@ -47,7 +47,7 @@ or re-initialises the card.
 | Sound | Plays from | Loaded |
 |---|---|---|
 | Idle | SD, streamed through its own 32 KB buffer (~1 s) | Buffer filled while the spinup plays, so RUN starts seamlessly; topped up continuously |
-| Access | SD, streamed through its own 32 KB buffer (~1 s) | As idle. It plays all the time; HDD activity only changes its volume |
+| Access | SD, streamed through its own 32 KB buffer (~1 s) | As idle. It plays all the time; HDD activity only changes its volume. After each burst it silently jumps to a random point, so regular activity doesn't keep hearing the same part of the loop |
 | Spinup | SD, streamed through a shared 32 KB "one-shot" buffer | At boot |
 | Jingle | SD, streamed through the one-shot buffer | First boot, before the spinup |
 | Spindown | **RAM**, the whole file, if it fits; otherwise SD through the one-shot buffer | When the pack loads (boot or pack change); the previous pack's copy is freed first |

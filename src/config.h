@@ -55,6 +55,7 @@ constexpr int      VOLUME_STEP_PERCENT  = 5;     // per encoder detent (VOLUME_S
 constexpr int      BALANCE_STEP_PERCENT = 10;    // per encoder detent (BALANCE_STEP 0.1)
 constexpr bool     ENCODER_REVERSED     = false; // flip if clockwise turns the volume down
 constexpr uint32_t BUTTON_DEBOUNCE_MS   = 20;
+constexpr uint32_t ACCESS_JUMP_QUIET_MS = 50;  // after a burst, wait this long (well past the 8 ms fade) before moving the silent access loop
 constexpr uint32_t ACTION_SHORT_PRESS_MAX_MS = 1000;  // ACTION_BUTTON_SHORT_PRESS_MAX_S
 constexpr uint32_t ACTION_LONG_PRESS_MS      = 3000;  // ACTION_BUTTON_LONG_PRESS_S
 
