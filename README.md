@@ -313,6 +313,7 @@ l  print the log of the last power loss (kept on the SD card)
 k  play the next beep profile (to audition them)
 d  list the SD card's root directory
 m  demo mode on/off (as DEMO_MODE, not saved)
+o  next OLED mode: activity, supercap, debug (not saved)
 j  replay the jingle (clears its flag and reboots)
 r  reboot
 b  reboot into the USB bootloader

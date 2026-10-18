@@ -174,16 +174,19 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
 - Low-power wait after a power-loss spindown (`enterLowPower()` in main.cpp):
   core 1 parks (I2S stopped, WFE), then clk_sys drops to 48 MHz via
   `set_sys_clock_48mhz()`, LEDs and OLED off. One-way: the exit is a reboot.
-  Cut 1 drew ~130 mW in this wait; the aim is a fraction of that. **Not yet
-  tried on hardware.**
+  Cut 1 drew ~130 mW in this wait; the aim is a fraction of that. Verified
+  2026-10-18 with simulated losses (parks, 48 MHz, power log keeps writing,
+  clean restart); the actual current saving isn't measured yet.
 - Sample rates: packs may be 16000, 22050, 32000, 44100 or 48000 Hz
   (`WAV_SUPPORTED_RATES` in wav.h), one rate per pack (`checkPackRate()` in
   main.cpp). The I2S output switches per pack (`audio::setSampleRate()`,
   applied by core 1 between blocks); the jingle may have its own rate. Beeps
   are made at the current rate. `cfg::DEFAULT_SAMPLE_RATE` (16 kHz) is only
   the boot rate. Higher rates shrink the spindown-in-RAM limit and the ring
-  cover (rings are 16384 samples: ~0.34 s at 48 kHz). **Not yet tried on
-  hardware.**
+  cover (rings are 16384 samples: ~0.34 s at 48 kHz). Verified 2026-10-18
+  with resampled packs at 22.05/32/48 kHz (streamed spindown at 48 kHz kept
+  `under=0`, min ring 320 ms of 340), a mixed-rate pack rejected by name, and
+  a WAV with 3 KB of metadata loading.
 - Jingle light show: while the jingle plays, the RGB LED cycles the rainbow
   (`cfg::JINGLE_RAINBOW_MS`) and its brightness follows the loudness. Core 1
   publishes each mixed block's peak (`audio::outputPeak()`); core 0 smooths
@@ -215,7 +218,8 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
       RANDOM_SAMPLE_PACK is not yet tried on hardware.
 - [x] OLED (SSD1306 on J6, I2C0 GP24/25), opt-in with `OLED_ENABLED`; modes
       `activity`/`supercap`/`debug`, plus volume/balance screens for 4 s
-      after a change. **Not yet tried on hardware.** Drawing is pure C++
+      after a change. Verified on hardware 2026-10-18 (all modes, the
+      overlays, orientation); serial `o` cycles the mode. Drawing is pure C++
       (`canvas.*`, `oled_screens.*`, `oled_model.h`, host-tested, previews in
       `docs/oled/`); `oled.*` is the I2C driver and screen logic. A frame
       blocks core 0 ~25 ms at 400 kHz, so frames are rate-limited. The panel

@@ -324,7 +324,7 @@ void handleSerial() {
             case 'h':
                 Console.println("firmware v" FIRMWARE_VERSION);
                 Console.println("h help | s stats | t stress on/off | p simulate power loss | "
-                               "a toggle simulated activity | + / - volume | > / < balance | n next pack | k beep test | l power log | d list SD root | m demo mode | j replay jingle | r reboot | b bootloader");
+                               "a toggle simulated activity | + / - volume | > / < balance | n next pack | k beep test | l power log | d list SD root | m demo mode | o OLED mode | j replay jingle | r reboot | b bootloader");
                 break;
             case 's': printStats(); break;
             case 't':
@@ -370,6 +370,13 @@ void handleSerial() {
             }
             case 'l': powerlog::printLast(); break;
             case 'd': sd::listDir("/"); break;
+            case 'o': {  // cycle the OLED mode, for testing (not saved)
+                static const char* const names[] = {"activity", "supercap", "debug"};
+                const int next = (static_cast<int>(settings.oledMode) + 1) % 3;
+                settings.oledMode = static_cast<OledMode>(next);
+                Console.printf("[oled] mode %s\n", names[next]);
+                break;
+            }
             case 'j':  // replay the jingle: clear its flag and reboot
                 for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SPINDOWN}) audio::stop(id);
                 io::ampOff();  // audio stopped: safe to write flash

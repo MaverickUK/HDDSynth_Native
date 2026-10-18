@@ -30,6 +30,7 @@ Overlay overlay(cfg::OLED_OVERLAY_MS);
 Overlay::Kind shownOverlay = Overlay::Kind::None;
 int lastVolumePct = -1, lastBalancePct = -1;
 uint32_t lastConsoleVersion = 0;
+OledMode shownMode = OledMode::Activity;  // to notice a mode change (serial 'o')
 bool dirty = true;
 uint32_t lastFrameMs = 0;
 
@@ -137,6 +138,7 @@ void begin(const Settings& s) {
     }
     canvas = new Canvas;
     activity = DutyMeter(s.oledSampleMs);
+    shownMode = s.oledMode;
     lastVolumePct = toPct(s.volume);
     lastBalancePct = toPct(s.balance);
     running = true;
@@ -153,6 +155,14 @@ void setPack(const char* name) {
 void service() {
     if (!running) return;
     const uint32_t now = millis();
+    if (settings->oledMode != shownMode) {
+        // Mode changed: the other graph's history means nothing here.
+        shownMode = settings->oledMode;
+        history = SampleHistory{};
+        activity = DutyMeter(settings->oledSampleMs);
+        nextSupercapMs = now;
+        dirty = true;
+    }
     sample(now);
 
     // Volume or balance changed (encoder or serial): show it for a while.
