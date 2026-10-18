@@ -181,7 +181,7 @@ TEST(wav_real_sample_packs) {
         if (!f) return;
         const uint32_t size = static_cast<uint32_t>(f.tellg());
         f.seekg(0);
-        std::vector<uint8_t> head(1024);
+        std::vector<uint8_t> head(cfg::WAV_HEADER_BYTES);  // as much as the firmware reads
         f.read(reinterpret_cast<char*>(head.data()), head.size());
         WavInfo info;
         const WavError e = parseWavHeader(head.data(), static_cast<size_t>(f.gcount()), size, info);
