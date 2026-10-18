@@ -243,6 +243,16 @@ output (GP17) also lights on HDD activity.
 
 ## Build and flash
 
+**Flash a board with the latest release** (needs the GitHub CLI, `gh`):
+
+```sh
+scripts/flash-latest.sh           # or: scripts/flash-latest.sh v0.14.0
+```
+
+It downloads the release UF2, waits for the board's RP2350 drive (a blank
+board shows it straight away; otherwise hold BOOT, tap RESET), copies the
+firmware on and checks the board comes back as HDDSYNTH.
+
 **Ready-made UF2s:** download `hddsynth-mk5-vX.Y.Z.uf2` from the
 [latest release](https://github.com/MaverickUK/HDDSynth_Native/releases/latest).
 GitHub Actions builds every push (the UF2 is in the run's artifacts) and
