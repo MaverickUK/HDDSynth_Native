@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+#include "settings.h"
+
 namespace beeps {
 
 enum class Type {
@@ -22,6 +24,9 @@ enum class Type {
     PackNotFound,
 };
 
+// Beeps follow the user's volume (see beepLevelFor() in beep.h) once this
+// has been called.
+void begin(const Settings& s);
 void play(Type t);
 bool active();
 

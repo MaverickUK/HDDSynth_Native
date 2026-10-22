@@ -224,7 +224,8 @@ low.
 
 "Halted" errors keep repeating their flash pattern on the red LED every
 4 seconds, so a unit with no speaker attached still says what's wrong.
-Beeps play at a fixed level, whatever the volume is set to.
+Beeps follow the volume setting, so they're never much louder than the drive
+sound, but stay audible (at least 25%) even at very low volumes.
 
 The rest of the time the RGB LED shows:
 

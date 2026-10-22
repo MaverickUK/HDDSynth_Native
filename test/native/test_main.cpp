@@ -646,6 +646,13 @@ TEST(beep_timing_matches_python_profiles) {
     CHECK_EQ(makeBeep(16000, 1200, 0, 100, BeepWave::Sine).totalSamples, 0u);
 }
 
+TEST(beep_level_follows_volume_within_limits) {
+    CHECK(beepLevelFor(0.0f) == 0.25f);   // never inaudible
+    CHECK(beepLevelFor(0.2f) == 0.25f);
+    CHECK(beepLevelFor(0.5f) == 0.5f);    // follows the volume
+    CHECK(beepLevelFor(1.0f) == 0.8f);    // never louder than CircuitPython's 0.8
+}
+
 TEST(beep_lasts_the_same_time_at_any_rate) {
     // Beeps are made at the pack's output rate; their timing must not change.
     const BeepPattern a = makeBeep(16000, 1200, 3, 100, BeepWave::Triangle);
@@ -1002,6 +1009,7 @@ int main(int argc, char** argv) {
     RUN(persist_rejects_blank_and_corrupt);
     RUN(persist_long_name_is_truncated_and_terminated);
     RUN(beep_timing_matches_python_profiles);
+    RUN(beep_level_follows_volume_within_limits);
     RUN(beep_lasts_the_same_time_at_any_rate);
     RUN(beep_envelope_fades_in_and_out);
     RUN(beep_led_flashes_once_per_note);

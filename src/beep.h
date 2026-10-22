@@ -34,5 +34,12 @@ void beepInit();
 // once the pattern has ended.
 int16_t beepSample(const BeepPattern& p, uint32_t n);
 
+// The level a beep plays at, for a given user volume (0..1): it follows the
+// volume, so a beep is never much louder than the drive sound, but never
+// drops below 0.25 (still audible) or above 0.8 (the CircuitPython level).
+inline float beepLevelFor(float volume) {
+    return volume < 0.25f ? 0.25f : (volume > 0.8f ? 0.8f : volume);
+}
+
 // For the RGB LED: is a note held (not releasing or in a gap) at sample `n`?
 bool beepNoteHeld(const BeepPattern& p, uint32_t n);

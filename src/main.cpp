@@ -621,6 +621,7 @@ void boot() {
     if (settings.demoMode) settings.simulationMode = true;  // the demo fakes HDD activity
     io::setSimulation(settings.simulationMode);
     controls::begin(settings);
+    beeps::begin(settings);
     printSettings(settings);
     power::begin(settings.powerDetection);
     powerlog::begin();

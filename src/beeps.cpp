@@ -16,7 +16,6 @@ constexpr uint32_t PITCH_HIGH = 1200;
 constexpr uint32_t PITCH_LOW = 400;
 constexpr uint32_t LENGTH_SHORT_MS = 100;
 constexpr uint32_t LENGTH_LONG_MS = 1000;
-constexpr float BEEP_LEVEL = 0.8f;  // beep.py plays at 0.8, whatever the user volume
 constexpr uint32_t ERROR_REPEAT_MS = 4000;  // RGB_LED_ERROR_REPEAT_S
 
 struct Profile {
@@ -50,6 +49,8 @@ void colour(bool error) {
     else io::rgb(0, 0, 255);        // RGB_LED_OPERATION_COLOUR
 }
 
+const Settings* settings = nullptr;  // for the user's volume; null before settings are read
+
 // Read by core 1 while the beep voice plays; only rewritten after stopping it.
 BeepPattern pattern;
 uint32_t patternRate = cfg::DEFAULT_SAMPLE_RATE;  // the output rate the pattern was made for
@@ -64,6 +65,8 @@ uint32_t elapsedSamples() {
 
 } // namespace
 
+void begin(const Settings& s) { settings = &s; }
+
 void play(Type t) {
     const Profile p = profileFor(t);
     audio::stop(VOICE_BEEP);  // never rewrite the pattern under core 1
@@ -71,7 +74,9 @@ void play(Type t) {
     pattern = makePattern(p, patternRate);
     error = p.error;
     startMs = millis();
-    playing = audio::startBeep(VOICE_BEEP, &pattern, levelFromFloat(BEEP_LEVEL));
+    // Before settings exist (e.g. the no-SD-card beep), the old fixed level.
+    const float level = settings ? beepLevelFor(settings->volume) : 0.8f;
+    playing = audio::startBeep(VOICE_BEEP, &pattern, levelFromFloat(level));
     ledLit = false;
 }
 
