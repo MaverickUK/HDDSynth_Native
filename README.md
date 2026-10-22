@@ -221,12 +221,30 @@ These are rendered by the host tests from the same drawing code the firmware
 uses (with made-up data). To regenerate them:
 `HDDSYNTH_PREVIEW_DIR=docs/oled test/run_native_tests.sh && python3 test/pbm_to_png.py docs/oled`.
 
+## Editing the SD card over USB
+
+You don't need to take the card out to change packs or settings.json:
+
+1. **Hold the action button while powering on** (or while tapping RESET),
+   for about a second. The RGB LED turns **solid blue** and the OLED, if
+   fitted, shows "USB drive".
+2. The SD card appears on the computer as a drive (named after the card's
+   volume label). No audio plays in this mode.
+3. Copy packs in, edit settings.json, and so on (about 450 KB/s each way).
+4. **Eject the drive** on the computer. The board reboots into normal use
+   with the changes. (Pressing the action button also reboots it; eject
+   first so the computer has finished writing.)
+
+macOS may spend a while indexing a newly shared card with Spotlight; an
+eject waits until it has finished.
+
 ## Controls
 
 - **Rotary encoder:** turn for volume (5% steps); press to switch to balance
   (10% steps) and back. Remembered across power cycles only with
   `SAVE_VOLUME_BALANCE`.
-- **Action button:** short press (under 1 s) = next sample pack, remembered
+- **Action button:** held at power-on = share the SD card over USB (see
+  above). Short press (under 1 s) = next sample pack, remembered
   across power cycles. Hold 3 s = factory reset: forgets the chosen pack,
   the jingle flag and the saved volume/balance, then reboots. A press between 1 and 3 s does nothing.
 

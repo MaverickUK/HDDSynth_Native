@@ -67,6 +67,11 @@ bool packByIndex(int index, char* out, size_t outLen, int& count);
 bool reserveFile(const char* path, uint32_t bytes, uint32_t& firstSector, uint32_t& sectors);
 bool readSector(uint32_t sector, uint8_t* dst);
 bool writeSector(uint32_t sector, const uint8_t* src);
+// Whole-card access for USB drive mode (usb_drive.*): nothing else may use
+// the card while it's shared.
+uint32_t cardSectors();
+bool readSectors(uint32_t sector, uint8_t* dst, size_t count);
+bool writeSectors(uint32_t sector, const uint8_t* src, size_t count);
 
 // Print a directory's entries (name, size) to Serial, for the 'd' command.
 void listDir(const char* path);

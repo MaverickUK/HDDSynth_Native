@@ -22,6 +22,10 @@ void setPack(const char* name);
 // Call every loop pass while running: samples, and redraws when needed.
 void service();
 
+// A simple message screen (title bar plus up to two lines), e.g. for USB
+// drive mode. Stays until the next service() redraw.
+void showMessage(const char* title, const char* line1, const char* line2 = "");
+
 // Power loss: switch the panel off (it draws ~10-20 mA lit) and stop.
 void off();
 

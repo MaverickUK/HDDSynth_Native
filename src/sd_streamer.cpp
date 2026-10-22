@@ -424,6 +424,16 @@ bool readSector(uint32_t sector, uint8_t* dst) { return mounted && card.card()->
 
 bool writeSector(uint32_t sector, const uint8_t* src) { return mounted && card.card()->writeSector(sector, src); }
 
+uint32_t cardSectors() { return mounted ? static_cast<uint32_t>(card.card()->sectorCount()) : 0; }
+
+bool readSectors(uint32_t sector, uint8_t* dst, size_t count) {
+    return mounted && card.card()->readSectors(sector, dst, count);
+}
+
+bool writeSectors(uint32_t sector, const uint8_t* src, size_t count) {
+    return mounted && card.card()->writeSectors(sector, src, count);
+}
+
 void listDir(const char* path) {
     FsFile dir, entry;
     if (!mounted || !dir.open(path)) {

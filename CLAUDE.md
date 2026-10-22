@@ -203,6 +203,14 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   STANDBY. Activity → `wakeFromStandby()` → `startSpinup()`. A pack change
   in standby spins up (`changePack(true)`). Power loss in STANDBY skips the
   spindown. Serial `z` forces it. Verified 2026-10-22 on hardware.
+- USB drive mode (`usb_drive.*`): action button held at power-on (checked in
+  `boot()` right after settings.json is read, before anything writes to the
+  card) → TinyUSB mass-storage interface registered with Arduino-Pico's
+  `USB` (the `FatFSUSB` pattern, but raw SD sectors via `sd::readSectors()`
+  / `writeSectors()`). 64-byte USB slices: 4 KB read-ahead, writes gathered
+  per sector. The loop runs `tud_task()` itself under `USB.mutex` (the core's
+  1 ms timer alone gave ~64 KB/s; now ~450 KB/s). macOS signals eject with
+  START STOP UNIT → reboot. Verified 2026-10-22 (mount, read, write, eject).
 - Jingle light show: while the jingle plays, the RGB LED cycles the rainbow
   (`cfg::JINGLE_RAINBOW_MS`) and its brightness follows the loudness. Core 1
   publishes each mixed block's peak (`audio::outputPeak()`); core 0 smooths

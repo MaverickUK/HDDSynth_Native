@@ -189,6 +189,15 @@ void service() {
     sendFrame();
 }
 
+void showMessage(const char* title, const char* line1, const char* line2) {
+    if (!running) return;
+    canvas->clear();
+    drawTitle(*canvas, title);
+    canvas->text(0, BODY_TOP + 8, line1);
+    canvas->text(0, BODY_TOP + 20, line2);
+    sendFrame();
+}
+
 void off() {
     if (!running) return;
     static const uint8_t displayOff[] = {0xAE};

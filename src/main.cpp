@@ -28,6 +28,7 @@
 #include "saved_levels.h"
 #include "sd_streamer.h"
 #include "settings.h"
+#include "usb_drive.h"
 #include "version.h"
 
 #ifndef WAIT_FOR_SERIAL_MS
@@ -690,6 +691,14 @@ void boot() {
     beeps::begin(settings);
     printSettings(settings);
     memcpy(settingsLedColour, settings.activityLedColour, 3);
+
+    // Action button held at power-on: share the SD card over USB instead
+    // (checked before anything writes to the card).
+    if (usbdrive::requested()) {
+        oled::begin(settings);
+        oled::showMessage("USB drive", "SD card shared over", "USB. Eject to finish.");
+        usbdrive::run();  // reboots when done
+    }
     power::begin(settings.powerDetection);
     powerlog::begin();
     persist::begin();
