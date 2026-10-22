@@ -123,7 +123,8 @@ SemVer, in `src/version.h` (`FIRMWARE_VERSION`). Bump it in the same commit
 as any firmware change (PATCH for fixes, MINOR for features, MAJOR for
 incompatible SD layout or settings.json changes) and tag that commit
 `vX.Y.Z`. The version is printed at boot and by the `h` serial command.
-Push the tag on its own after the branch (`git push origin main`, then
+Add the version to `CHANGELOG.md` (Keep a Changelog style) in the same
+commit. Push the tag on its own after the branch (`git push origin main`, then
 `git push origin vX.Y.Z`): a tag pushed together with its branch didn't
 trigger the release workflow.
 
