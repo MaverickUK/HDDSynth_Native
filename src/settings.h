@@ -28,6 +28,7 @@ struct Settings {
     bool oledEnabled = false;        // OLED_ENABLED: the 128x64 display on J6
     OledMode oledMode = OledMode::Activity;  // OLED_MODE: "activity", "supercap" or "debug"
     uint32_t oledSampleMs = 1000;    // OLED_SAMPLE_MS: time per graph column
+    uint32_t standbyMinutes = 0;     // STANDBY_MINUTES: spin down after this long without activity (0 = never)
 };
 
 // Parse JSON text into `s` (unknown keys ignored, bad values keep defaults).

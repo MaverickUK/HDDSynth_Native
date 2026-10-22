@@ -198,6 +198,11 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   ACTIVITY_LED_COLOUR, BALANCE_DEFAULT (precedence: settings.json > saved at
   boot > pack.json > 0.5; on a pack change the pack's applies unless
   settings.json pins it). `json_colour.h` shares the colour parser.
+- Standby (`STANDBY_MINUTES`, 0 = off, ignored in demo mode): no activity for
+  that long → `enterStandby()` plays the spindown (STANDBY_SPINDOWN), amp off,
+  STANDBY. Activity → `wakeFromStandby()` → `startSpinup()`. A pack change
+  in standby spins up (`changePack(true)`). Power loss in STANDBY skips the
+  spindown. Serial `z` forces it. Verified 2026-10-22 on hardware.
 - Jingle light show: while the jingle plays, the RGB LED cycles the rainbow
   (`cfg::JINGLE_RAINBOW_MS`) and its brightness follows the loudness. Core 1
   publishes each mixed block's peak (`audio::outputPeak()`); core 0 smooths

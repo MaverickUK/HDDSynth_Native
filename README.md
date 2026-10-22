@@ -178,6 +178,7 @@ default. For example:
 | `RGB_LED_BRIGHTNESS` | `0.5` | Overall RGB LED brightness, 0.0 to 1.0 (applies to beeps and the jingle show too). |
 | `ALWAYS_PLAY_JINGLE` | `false` | Play `/jingle.wav` at every boot, not just the first. *(New: a code constant in CircuitPython.)* |
 | `DEMO_MODE` | `false` | Demo mode, see below. *(New.)* |
+| `STANDBY_MINUTES` | `0` (off) | Spin down after this many minutes without HDD activity, like a real drive's power management: the spindown plays and the board goes quiet. The next HDD access spins it up again (spinup, then idle/access). A short press of the action button changes pack and spins up. Ignored in demo mode. *(New.)* |
 | `OLED_ENABLED` | `false` | Use an SSD1306 128x64 I2C OLED on header J6, see [OLED display](#oled-display). *(New.)* |
 | `OLED_MODE` | `"activity"` | The OLED's main screen: `"activity"`, `"supercap"` or `"debug"`. *(New.)* |
 | `OLED_SAMPLE_MS` | `1000` | Time covered by each column of the activity and supercap graphs (minimum 50). *(New.)* |
@@ -346,6 +347,7 @@ k  play the next beep profile (to audition them)
 d  list the SD card's root directory
 m  demo mode on/off (as DEMO_MODE, not saved)
 o  next OLED mode: activity, supercap, debug (not saved)
+z  go into standby now (as if STANDBY_MINUTES had passed)
 j  replay the jingle (clears its flag and reboots)
 r  reboot
 b  reboot into the USB bootloader

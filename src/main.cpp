@@ -51,7 +51,7 @@ void loop1() { audio::core1Loop(); }
 // ---------------------------------------------------------------------------
 namespace {
 
-enum class State { Boot, Jingle, Spinup, Run, DemoSpindown, Spindown, WaitPower, Halted };
+enum class State { Boot, Jingle, Spinup, Run, DemoSpindown, StandbySpindown, Standby, Spindown, WaitPower, Halted };
 const char* stateName(State s) {
     switch (s) {
         case State::Boot: return "BOOT";
@@ -59,6 +59,8 @@ const char* stateName(State s) {
         case State::Spinup: return "SPINUP";
         case State::Run: return "RUN";
         case State::DemoSpindown: return "DEMO_SPINDOWN";
+        case State::StandbySpindown: return "STANDBY_SPINDOWN";
+        case State::Standby: return "STANDBY";
         case State::Spindown: return "SPINDOWN";
         case State::WaitPower: return "WAIT_POWER";
         case State::Halted: return "HALTED";
@@ -106,6 +108,7 @@ bool lowPower = false;  // core 1 deliberately parked after the spindown
 
 uint32_t nextStatsMs = 0;
 uint32_t demoEndsMs = 0;  // DEMO_MODE: when the current pack spins down
+uint32_t lastActivityMs = 0;  // STANDBY_MINUTES: the last time the drive was active
 uint32_t nextPowerTraceMs = 0;
 uint32_t lastLoopStartUs = 0;
 uint32_t maxLoopGapUs = 0;  // longest gap between loop() passes since power loss
@@ -114,10 +117,10 @@ void enterRun();
 void startSpinup();
 void pickDemoColour();
 bool startSpindownVoice();
-void changePack();
+void changePack(bool spinUp = false);
+void enterStandby(bool forced = false);
 void factoryReset();
 bool startJingle();
-void startSpinup();
 
 // ---- helpers ---------------------------------------------------------------
 
@@ -334,7 +337,7 @@ void handleSerial() {
             case 'h':
                 Console.println("firmware v" FIRMWARE_VERSION);
                 Console.println("h help | s stats | t stress on/off | p simulate power loss | "
-                               "a toggle simulated activity | + / - volume | > / < balance | n next pack | k beep test | l power log | d list SD root | m demo mode | o OLED mode | j replay jingle | r reboot | b bootloader");
+                               "a toggle simulated activity | + / - volume | > / < balance | n next pack | k beep test | l power log | d list SD root | m demo mode | o OLED mode | z standby | j replay jingle | r reboot | b bootloader");
                 break;
             case 's': printStats(); break;
             case 't':
@@ -380,6 +383,10 @@ void handleSerial() {
             }
             case 'l': powerlog::printLast(); break;
             case 'd': sd::listDir("/"); break;
+            case 'z':  // standby now, for testing (as if STANDBY_MINUTES had passed)
+                if (state == State::Run) enterStandby(/*forced*/ true);
+                else Console.println("[standby] only from RUN");
+                break;
             case 'o': {  // cycle the OLED mode, for testing (not saved)
                 static const char* const names[] = {"activity", "supercap", "debug"};
                 const int next = (static_cast<int>(settings.oledMode) + 1) % 3;
@@ -550,6 +557,30 @@ void pickDemoColour() {
     Console.printf("[demo] %s, LED colour %u,%u,%u\n", pack, c[0], c[1], c[2]);
 }
 
+// ---- standby -------------------------------------------------------------------
+// STANDBY_MINUTES: like a real drive's power management, spin down after a
+// spell without HDD activity, and spin up again on the next access.
+
+bool standbyDue() {
+    if (!settings.standbyMinutes || settings.demoMode) return false;
+    return millis() - lastActivityMs >= settings.standbyMinutes * 60000u;
+}
+
+void enterStandby(bool forced) {
+    if (forced) Console.println("[standby] spinning down (serial z)");
+    else Console.printf("[standby] no activity for %lu min, spinning down\n",
+                        static_cast<unsigned long>(settings.standbyMinutes));
+    stopPackVoices();
+    if (settings.playSpindown) startSpindownVoice();
+    state = State::StandbySpindown;
+}
+
+void wakeFromStandby() {
+    Console.println("[standby] activity, spinning up");
+    io::ampOn();
+    startSpinup();  // then RUN, as at boot
+}
+
 void enterDemoSpindown() {
     Console.println("[demo] spinning down");
     stopPackVoices();
@@ -566,7 +597,7 @@ void nextDemoPack() {
 // Short press of the action button (or serial 'n'): switch to the next pack
 // without rebooting, and remember it (sample_changer.next_pack() plus the
 // reload callback in the CircuitPython firmware). Spinup is not replayed.
-void changePack() {
+void changePack(bool spinUp) {
     stopPackVoices();
     beepAndWait(beeps::Type::ChangePack);
     io::ampOff();
@@ -578,9 +609,13 @@ void changePack() {
     const uint32_t ms = persist::commit();
     if (ms) Console.printf("[persist] saved pack in %lu ms\n", static_cast<unsigned long>(ms));
     lastHeartbeatChangeMs = millis();
+    io::ampOn();
+    if (spinUp) {
+        startSpinup();  // e.g. out of standby: spin up like a real drive
+        return;
+    }
     if (settings.playIdle) sd::prime(streamIdle);
     sd::prime(streamAccess);
-    io::ampOn();
     enterRun();
 }
 
@@ -780,6 +815,7 @@ void enterRun() {
     audio::i2sUnderflowed();  // clear the flag left by I2S starting before audio existed
     nextStatsMs = millis() + 5000;
     demoEndsMs = millis() + cfg::DEMO_PACK_MS;
+    lastActivityMs = millis();
     state = State::Run;
 }
 
@@ -797,8 +833,10 @@ void enterSpindown() {
     sd::closeStream(streamSpinup);  // frees the one-shot ring for a streamed spindown
     io::rgbOff();
     io::hddLed(false);
-    if (state == State::DemoSpindown && audio::isPlaying(VOICE_SPINDOWN)) {
-        powerlog::logf("[power] demo spindown already playing, letting it finish");
+    if ((state == State::DemoSpindown || state == State::StandbySpindown) && audio::isPlaying(VOICE_SPINDOWN)) {
+        powerlog::logf("[power] spindown already playing, letting it finish");
+    } else if (state == State::Standby) {
+        powerlog::logf("[power] in standby: already spun down");
     } else if (settings.playSpindown && startSpindownVoice()) {
         powerlog::logf("[power] spindown");
     }
@@ -819,6 +857,7 @@ void jumpAccess() {
 void runStep() {
     const bool active = io::activity();
     const bool beepEnded = beeps::service();  // a beep owns the RGB LED while it plays
+    if (active) lastActivityMs = millis();
     if (lastAccess && !active) {
         accessOffMs = millis();
         accessJumpPending = true;
@@ -897,6 +936,7 @@ void loop() {
             else if (action == controls::Action::NextPack) settings.demoMode ? enterDemoSpindown() : changePack();
             else if (action == controls::Action::FactoryReset) factoryReset();
             else if (settings.demoMode && static_cast<int32_t>(millis() - demoEndsMs) >= 0) enterDemoSpindown();
+            else if (standbyDue()) enterStandby();
             else runStep();
             break;
         }
@@ -911,6 +951,35 @@ void loop() {
             if (power::lost()) enterSpindown();
             else if (action == controls::Action::FactoryReset) factoryReset();
             else if (!audio::isPlaying(VOICE_SPINDOWN)) nextDemoPack();
+            break;
+        }
+
+        case State::StandbySpindown: {
+            sd::pump();
+            oled::service();
+            savedlevels::service();
+            const controls::Action action = controls::poll();
+            beeps::service();
+            audio::setLevel(VOICE_SPINDOWN, baseLevel());
+            if (power::lost()) enterSpindown();
+            else if (action == controls::Action::FactoryReset) factoryReset();
+            else if (!audio::isPlaying(VOICE_SPINDOWN)) {
+                io::ampOff();
+                Console.println("[standby] spun down, waiting for activity");
+                state = State::Standby;
+            }
+            break;
+        }
+
+        case State::Standby: {
+            oled::service();
+            savedlevels::service();
+            const controls::Action action = controls::poll();
+            beeps::service();
+            if (power::lost()) enterSpindown();
+            else if (action == controls::Action::NextPack) changePack(/*spinUp*/ true);
+            else if (action == controls::Action::FactoryReset) factoryReset();
+            else if (io::activity()) wakeFromStandby();
             break;
         }
 

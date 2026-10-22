@@ -68,6 +68,10 @@ bool parseSettingsJson(const char* json, Settings& s) {
         else if (!strcasecmp(m, "debug")) s.oledMode = OledMode::Debug;
         else Console.printf("[settings] unknown OLED_MODE '%s', using activity\n", m);
     }
+    if (doc["STANDBY_MINUTES"].is<int>()) {
+        const int m = doc["STANDBY_MINUTES"].as<int>();
+        s.standbyMinutes = static_cast<uint32_t>(m < 0 ? 0 : m);
+    }
     if (doc["OLED_SAMPLE_MS"].is<int>()) {
         const int ms = doc["OLED_SAMPLE_MS"].as<int>();
         s.oledSampleMs = static_cast<uint32_t>(ms < 50 ? 50 : ms);  // faster than 50 ms is just noise
@@ -80,8 +84,9 @@ bool parseSettingsJson(const char* json, Settings& s) {
 
 void printSettings(const Settings& s) {
     Console.printf("[settings] pack='%s' volume=%d%% balance=%d%% sim=%d spinup=%d spindown=%d idle=%d "
-                  "hold=%lums power_detect=%d random_pack=%d always_jingle=%d demo=%d save_levels=%d oled=%d\n",
+                  "hold=%lums power_detect=%d random_pack=%d always_jingle=%d demo=%d save_levels=%d oled=%d standby_min=%lu\n",
                   s.samplePack, static_cast<int>(s.volume * 100 + 0.5f), static_cast<int>(s.balance * 100 + 0.5f), s.simulationMode, s.playSpinup, s.playSpindown,
                   s.playIdle, static_cast<unsigned long>(s.accessHoldMs), s.powerDetection, s.randomSamplePack,
-                  s.alwaysPlayJingle, s.demoMode, s.saveVolumeBalance, s.oledEnabled);
+                  s.alwaysPlayJingle, s.demoMode, s.saveVolumeBalance, s.oledEnabled,
+                  static_cast<unsigned long>(s.standbyMinutes));
 }
