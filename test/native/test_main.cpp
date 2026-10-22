@@ -317,6 +317,26 @@ TEST(mixer_levels_and_saturation) {
     CHECK_EQ(out[0], 32767);  // clamped, no wraparound
 }
 
+TEST(mixer_gain_up_to_two) {
+    CHECK_EQ(levelFromFloat(0.5f), 16384);
+    CHECK_EQ(levelFromFloat(1.0f), LEVEL_UNITY);
+    CHECK_EQ(levelFromFloat(1.5f), 49152);   // a pack GAIN above 1
+    CHECK_EQ(levelFromFloat(2.0f), 65535);   // the most a uint16 Q15 level holds
+    CHECK_EQ(levelFromFloat(5.0f), 65535);
+    Voice v[1];
+    std::vector<int16_t> quiet(128, 10000), loud(128, 30000), low(128, -30000);
+    int16_t out[128];
+    startMem(v[0], quiet.data(), 128, true, levelFromFloat(2.0f));
+    mixBlock(v, 1, out, 128);
+    CHECK(out[5] >= 19998 && out[5] <= 20000);  // doubled
+    startMem(v[0], loud.data(), 128, true, levelFromFloat(2.0f));
+    mixBlock(v, 1, out, 128);
+    CHECK_EQ(out[5], 32767);                    // saturates, doesn't wrap
+    startMem(v[0], low.data(), 128, true, levelFromFloat(2.0f));
+    mixBlock(v, 1, out, 128);
+    CHECK_EQ(out[5], -32768);
+}
+
 TEST(mixer_level_ramp_is_smooth) {
     Voice v[1];
     std::vector<int16_t> dc(256, 20000);
@@ -1034,6 +1054,7 @@ int main(int argc, char** argv) {
     RUN(mixer_unity_passthrough_and_end);
     RUN(mixer_memory_loop);
     RUN(mixer_levels_and_saturation);
+    RUN(mixer_gain_up_to_two);
     RUN(mixer_level_ramp_is_smooth);
     RUN(mixer_stop_request);
     RUN(mixer_stop_fades_out_over_one_block);

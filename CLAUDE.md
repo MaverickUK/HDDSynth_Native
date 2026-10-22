@@ -192,6 +192,12 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   `jumpAccess()` re-primes it from a random point (~20 ms of SD reads).
   Prompted by a PC with a burst every ~10 s against ~10 s loops: every
   burst sounded like the loop's start. Verified 2026-10-18 (demo mode).
+- `pack.json` per pack (`pack_info.*`, loaded by `loadPackInfo()` in main.cpp):
+  NAME (OLED title), AUTHOR, GAIN 0.0-2.0 (scales spinup/idle/access/
+  spindown; `levelFromFloat()` now allows up to ~2.0, host-tested),
+  ACTIVITY_LED_COLOUR, BALANCE_DEFAULT (precedence: settings.json > saved at
+  boot > pack.json > 0.5; on a pack change the pack's applies unless
+  settings.json pins it). `json_colour.h` shares the colour parser.
 - Jingle light show: while the jingle plays, the RGB LED cycles the rainbow
   (`cfg::JINGLE_RAINBOW_MS`) and its brightness follows the loudness. Core 1
   publishes each mixed block's peak (`audio::outputPeak()`); core 0 smooths

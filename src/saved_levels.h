@@ -12,6 +12,9 @@ namespace savedlevels {
 // what it did.
 void begin(Settings& s);
 
+// At boot: did a saved balance get applied (so a pack's own default yields)?
+bool balanceRestored();
+
 // Call every loop pass while running: saves 2 s after the last change.
 void service();
 

@@ -58,9 +58,11 @@ struct Voice {
 // Called on core 1 only.
 void mixBlock(Voice* voices, size_t voiceCount, int16_t* out, size_t frames);
 
-// Convert a 0.0..1.0 gain to Q15.
+// Convert a gain to Q15, up to just under 2.0 (a pack's GAIN can boost a
+// quiet pack). mixBlock()'s int32 maths has room for it (32767 x 65535 fits)
+// and the final mix saturates instead of wrapping.
 inline uint16_t levelFromFloat(float g) {
     if (g <= 0.0f) return 0;
-    if (g >= 1.0f) return LEVEL_UNITY;
-    return static_cast<uint16_t>(g * LEVEL_UNITY + 0.5f);
+    const float q = g * LEVEL_UNITY + 0.5f;
+    return q >= 65535.0f ? 65535 : static_cast<uint16_t>(q);
 }

@@ -100,6 +100,7 @@ spindowns.
 /samples/<pack>/idle.wav
 /samples/<pack>/access.wav
 /samples/<pack>/spindown.wav
+/samples/<pack>/pack.json optional, see below
 /powerlog.bin             created by the firmware (power-loss log)
 /state.bin                created by the firmware (saved volume/balance)
 ```
@@ -120,6 +121,29 @@ length otherwise: everything else streams from the card.
 Metadata that editors add before the audio (`bext`, `LIST`, markers) is
 fine, as long as the audio starts within the first 4 KB of the file. A file
 that breaks these rules is reported as a broken pack (4 low beeps).
+
+### pack.json (optional, per pack)
+
+A pack can carry its own settings in `/samples/<pack>/pack.json`. Every key
+is optional:
+
+```json
+{
+    "NAME": "IBM Ultrastar 36LZX",
+    "AUTHOR": "PB",
+    "GAIN": 1.4,
+    "ACTIVITY_LED_COLOUR": "#FF8800",
+    "BALANCE_DEFAULT": 0.3
+}
+```
+
+| Key | Default | What it does |
+|---|---|---|
+| `NAME` | the folder name | Shown on the OLED's title bar. |
+| `AUTHOR` | *(none)* | Credited in the boot log. |
+| `GAIN` | `1.0` | Loudness trim for this pack's sounds (spinup, idle, access, spindown), 0.0 to 2.0, to even out packs recorded at different levels. Doesn't affect beeps or the jingle. |
+| `ACTIVITY_LED_COLOUR` | settings.json's | This pack's activity LED colour (`"#RRGGBB"` or `[r, g, b]`). Demo mode's random colour still wins. |
+| `BALANCE_DEFAULT` | settings.json's / 0.5 | This pack's starting balance, since packs differ in how loud idle is against access. A `BALANCE_DEFAULT` in settings.json overrides it, and so does a saved balance at boot (`SAVE_VOLUME_BALANCE`). On a pack change, the new pack's value applies. |
 
 ### settings.json
 

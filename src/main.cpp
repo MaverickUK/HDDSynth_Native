@@ -21,6 +21,7 @@
 #include "io.h"
 #include "level_follower.h"
 #include "oled.h"
+#include "pack_info.h"
 #include "persist.h"
 #include "power.h"
 #include "powerlog.h"
@@ -68,6 +69,8 @@ const char* stateName(State s) {
 State state = State::Boot;
 Settings settings;
 char pack[64] = {0};
+PackInfo packInfo;                  // the loaded pack's pack.json (defaults if it has none)
+uint8_t settingsLedColour[3] = {0};  // settings.json's activity colour, for packs without their own
 beeps::Type haltBeep = beeps::Type::NoSdCard;  // the error the red LED repeats in HALTED
 
 // One shared ring for the one-shot samples (spinup at boot, spindown if it
@@ -143,10 +146,10 @@ void samplePath(char* out, size_t len, const char* file) {
 // volume x (1 - balance), as in the CircuitPython firmware (they share its
 // voice 0), so the handovers between them never change level. Independent of
 // PLAY_IDLE. The jingle is the exception: always full volume.
-uint16_t baseLevel() { return levelFromFloat(settings.volume * (1.0f - settings.balance)); }
+uint16_t baseLevel() { return levelFromFloat(settings.volume * (1.0f - settings.balance) * packInfo.gain); }
 uint16_t idleLevel() { return settings.playIdle ? baseLevel() : 0; }
 uint16_t accessLevel(bool active) {
-    return active ? levelFromFloat(settings.volume * settings.balance) : 0;
+    return active ? levelFromFloat(settings.volume * settings.balance * packInfo.gain) : 0;
 }
 
 // Beep and wait (amp on), calling feedWatchdog() meanwhile. Leaves the amp on.
@@ -447,9 +450,37 @@ bool checkPackRate() {
     return true;
 }
 
+// pack.json (optional): name, author, gain, activity colour, starting balance.
+void loadPackInfo() {
+    char p[128];
+    samplePath(p, sizeof(p), "pack.json");
+    static char json[1024];
+    size_t len = 0;
+    packInfo = PackInfo{};
+    if (sd::readTextFile(p, json, sizeof(json), len) && !parsePackJson(json, packInfo)) {
+        Console.printf("[pack] %s: pack.json is not valid JSON, ignoring it\n", pack);
+    }
+    if (packInfo.name[0] || packInfo.author[0] || packInfo.gain != 1.0f) {
+        Console.printf("[pack] %s%s%s, gain %d%%\n", packInfo.name[0] ? packInfo.name : pack,
+                       packInfo.author[0] ? " by " : "", packInfo.author,
+                       static_cast<int>(lroundf(packInfo.gain * 100)));
+    }
+    oled::setPack(packInfo.name[0] ? packInfo.name : pack);
+    // The pack's own activity colour, else settings.json's (demo mode then
+    // picks its own random one).
+    memcpy(settings.activityLedColour, packInfo.hasLedColour ? packInfo.ledColour : settingsLedColour, 3);
+    // Starting balance: settings.json BALANCE_DEFAULT pins it; at boot a
+    // saved balance (SAVE_VOLUME_BALANCE) also wins; otherwise the pack's.
+    if (packInfo.hasBalance && !settings.balanceFromConfig &&
+        !(state == State::Boot && savedlevels::balanceRestored())) {
+        settings.balance = packInfo.balance;
+        Console.printf("[pack] balance %d%% (pack.json)\n", static_cast<int>(lroundf(packInfo.balance * 100)));
+    }
+}
+
 bool loadPack() {
     Console.printf("[pack] %s\n", pack);
-    oled::setPack(pack);
+    loadPackInfo();
     if (!checkPackRate()) return false;
     // Nothing is playing at this point (boot, pack change, demo hand-over).
     audio::setSampleRate(packRate);
@@ -623,6 +654,7 @@ void boot() {
     controls::begin(settings);
     beeps::begin(settings);
     printSettings(settings);
+    memcpy(settingsLedColour, settings.activityLedColour, 3);
     power::begin(settings.powerDetection);
     powerlog::begin();
     persist::begin();

@@ -4,10 +4,13 @@
 #include <ArduinoJson.h>
 
 #include "console.h"
+#include "json_colour.h"
 
 namespace {
 
 float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+
+} // namespace
 
 bool parseColour(JsonVariantConst v, uint8_t out[3]) {
     if (v.is<const char*>()) {
@@ -31,8 +34,6 @@ bool parseColour(JsonVariantConst v, uint8_t out[3]) {
     }
     return false;
 }
-
-} // namespace
 
 bool parseSettingsJson(const char* json, Settings& s) {
     JsonDocument doc;

@@ -16,6 +16,7 @@ constexpr uint32_t FILE_BYTES = 2 * levels::SECTOR_BYTES;  // slots A and B
 
 Settings* settings = nullptr;
 bool ready = false;  // saving enabled and the file is reserved
+bool restoredBalance = false;
 uint32_t firstSector = 0;
 levels::Record current;  // what is on the card (or will be)
 levels::Saver saver(cfg::SAVE_LEVELS_DEBOUNCE_MS);
@@ -59,13 +60,18 @@ void begin(Settings& s) {
 
     // settings.json wins over a saved value, key by key.
     if (current.volumePct != levels::NOT_SAVED && !s.volumeFromConfig) s.volume = current.volumePct / 100.0f;
-    if (current.balancePct != levels::NOT_SAVED && !s.balanceFromConfig) s.balance = current.balancePct / 100.0f;
+    if (current.balancePct != levels::NOT_SAVED && !s.balanceFromConfig) {
+        s.balance = current.balancePct / 100.0f;
+        restoredBalance = true;
+    }
     Console.printf("[levels] saving on; volume %d%% (%s), balance %d%% (%s)\n", toPct(s.volume),
                   s.volumeFromConfig ? "settings.json" : current.volumePct != levels::NOT_SAVED ? "saved" : "default",
                   toPct(s.balance),
                   s.balanceFromConfig ? "settings.json" : current.balancePct != levels::NOT_SAVED ? "saved" : "default");
     saver.baseline(toPct(s.volume), toPct(s.balance));
 }
+
+bool balanceRestored() { return restoredBalance; }
 
 void service() {
     if (!ready) return;
