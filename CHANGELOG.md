@@ -6,6 +6,22 @@ follow [Semantic Versioning](https://semver.org). Linked versions have a
 release with its UF2 on the
 [releases page](https://github.com/MaverickUK/HDDSynth_Native/releases).
 
+## [0.17.1] - 2026-10-25
+
+### Fixed
+- **Boot loop of beeps when the SD card wasn't ready at power-on** (seen on a
+  PC: a red flash with a beep, a red flash, then a long blue beep, over and
+  over, even after the PC was switched off). Two bugs together:
+  - The SD card was tried once, immediately at power-on; a card that wasn't
+    ready yet halted the board with "no SD card". It's now retried for up to
+    3 s, and a halted board keeps looking for the card and restarts once it
+    answers.
+  - The buttons were only set up after the SD card mounted, so after that
+    error the action button's input read as pressed, and the halted state's
+    3 s long press did a factory reset and rebooted, again and again. The
+    buttons are now set up first, and a factory reset from the halted state
+    needs the button to have been released first.
+
 ## [0.17.0] - 2026-10-22
 
 ### Added
@@ -163,6 +179,7 @@ v0.13.0.)
 ### Fixed
 - Recovery from SD card removal without blocking or rebooting.
 
+[0.17.1]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.17.1
 [0.17.0]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.17.0
 [0.14.2]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.14.2
 [0.14.1]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.14.1

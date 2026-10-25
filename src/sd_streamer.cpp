@@ -210,7 +210,24 @@ bool feedOnce(Stream& s, int slot) {
 
 } // namespace
 
-bool begin() { return mount(); }
+bool begin() {
+    // Some cards aren't ready the instant power comes up (and a PC's supply
+    // rises more slowly than USB), so keep trying for a while. The quick
+    // presence probe avoids card.begin()'s long timeout on an absent card.
+    const uint32_t t0 = millis();
+    int attempts = 0;
+    do {
+        ++attempts;
+        if (cardResponds() && mount()) {
+            if (attempts > 1) Console.printf("[sd] card ready after %d attempts\n", attempts);
+            return true;
+        }
+        delay(100);
+    } while (millis() - t0 < cfg::SD_BOOT_RETRY_MS);
+    return false;
+}
+
+bool present() { return cardResponds(); }
 
 bool cardOk() { return mounted; }
 

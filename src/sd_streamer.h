@@ -31,7 +31,8 @@ struct Stats {
     uint32_t maxReadMicros = 0;  // worst single chunk read since last reset
 };
 
-bool begin();                       // init SPI1 + card + filesystem
+bool begin();                       // init SPI1 + card + filesystem; retries for cfg::SD_BOOT_RETRY_MS
+bool present();                     // a card answers (quick probe; doesn't mount)
 bool cardOk();                      // false while the card is down
 
 // Open a WAV for streaming into `ring` for `voice`. Validates the format.

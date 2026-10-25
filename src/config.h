@@ -40,6 +40,7 @@ constexpr size_t   SD_CHUNK_SAMPLES = 1024;  // 2 KB per SD read
 constexpr uint32_t SD_SPI_HZ        = 25000000;
 constexpr int      SD_READ_RETRIES  = 3;
 constexpr size_t   WAV_HEADER_BYTES = 4096;  // the WAV's data chunk must start within this (room for editor metadata)
+constexpr uint32_t SD_BOOT_RETRY_MS = 3000;          // at power-on, keep trying the card this long before "no SD card"
 constexpr uint32_t SD_REMOUNT_INTERVAL_MS = 500;    // while the card is down, look for it this often
 constexpr uint32_t SD_PROBE_HZ      = 400000;       // card init speed, used for the presence probe
 

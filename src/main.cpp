@@ -75,6 +75,8 @@ char pack[64] = {0};
 PackInfo packInfo;                  // the loaded pack's pack.json (defaults if it has none)
 uint8_t settingsLedColour[3] = {0};  // settings.json's activity colour, for packs without their own
 beeps::Type haltBeep = beeps::Type::NoSdCard;  // the error the red LED repeats in HALTED
+bool haltButtonSeenUp = false;  // HALTED: the action button has been released since (guards factory reset)
+uint32_t nextCardCheckMs = 0;   // HALTED with no SD card: when to look for one again
 
 // One shared ring for the one-shot samples (spinup at boot, spindown if it
 // has to stream), plus one per looping voice.
@@ -674,6 +676,11 @@ void boot() {
     Console.printf("[boot] debug build (USB upload): waited up to %d ms for the serial console\n", WAIT_FOR_SERIAL_MS);
 #endif
     io::begin(settings);  // amp off, LEDs off before anything else
+    // Buttons next, before anything can fail and halt: an unconfigured pin
+    // sits on the RP2350's default pull-down, reads as "pressed", and the
+    // halted state's 3 s long press would then factory-reset in a loop.
+    controls::begin(settings);
+    beeps::begin(settings);
 
     if (!sd::begin()) {
         halt("no SD card", beeps::Type::NoSdCard);
@@ -687,8 +694,6 @@ void boot() {
     }
     if (settings.demoMode) settings.simulationMode = true;  // the demo fakes HDD activity
     io::setSimulation(settings.simulationMode);
-    controls::begin(settings);
-    beeps::begin(settings);
     printSettings(settings);
     memcpy(settingsLedColour, settings.activityLedColour, 3);
 
@@ -1014,8 +1019,20 @@ void loop() {
 
         case State::Halted:
             oled::service();  // e.g. the debug screen shows the fatal error
-            // A factory reset is still possible, e.g. when the saved pack is broken.
-            if (controls::poll() == controls::Action::FactoryReset) factoryReset();
+            // A factory reset is still possible (e.g. when the saved pack is
+            // broken), but only once the button has been seen released, so a
+            // stuck or floating input can't trigger one.
+            if (digitalRead(cfg::PIN_ACTION_BUTTON) == HIGH) haltButtonSeenUp = true;
+            if (controls::poll() == controls::Action::FactoryReset && haltButtonSeenUp) factoryReset();
+            // No SD card: keep looking, and start over once one answers.
+            if (haltBeep == beeps::Type::NoSdCard && static_cast<int32_t>(millis() - nextCardCheckMs) >= 0) {
+                nextCardCheckMs = millis() + 2000;
+                if (sd::present()) {
+                    Console.println("[sd] card found, restarting");
+                    Serial.flush();
+                    rp2040.reboot();
+                }
+            }
             // Repeat the error's beep pattern in red so a headless unit shows
             // which fault it is; serial stays alive.
             if (beeps::errorLedOn(haltBeep, millis())) io::rgb(255, 0, 0);
