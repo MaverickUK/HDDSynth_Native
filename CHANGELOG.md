@@ -6,6 +6,18 @@ follow [Semantic Versioning](https://semver.org). Linked versions have a
 release with its UF2 on the
 [releases page](https://github.com/MaverickUK/HDDSynth_Native/releases).
 
+## [0.18.0] - 2026-10-25
+
+### Added
+- **HDDSynthPro activity link** (experimental, off unless
+  `EXPERIMENTAL_HDDSYNTHPRO_SUPPORT` is on): an HDDSynthPro on header J6
+  (instead of the OLED) reports the drive's activity over a one-way UART.
+  Its busy flag replaces the activity input, and during sequential
+  transfers an optional per-pack `sequential.wav` plays instead of
+  `access.wav` (packs without one keep `access.wav`). The activity LED
+  turns `SEQUENTIAL_LED_COLOUR` (orange) during them. Simulation mode mixes
+  in sequential spells.
+
 ## [0.17.1] - 2026-10-25
 
 ### Fixed
@@ -179,6 +191,7 @@ v0.13.0.)
 ### Fixed
 - Recovery from SD card removal without blocking or rebooting.
 
+[0.18.0]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.18.0
 [0.17.1]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.17.1
 [0.17.0]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.17.0
 [0.14.2]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.14.2

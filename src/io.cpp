@@ -6,6 +6,7 @@
 #include <initializer_list>
 
 #include "config.h"
+#include "hdd_link.h"
 
 namespace io {
 
@@ -15,6 +16,7 @@ const Settings* settings = nullptr;
 bool simulate = false;
 uint32_t lastActiveMs = 0;
 bool simState = false;
+bool simSequential = false;  // the current simulated burst is a sequential spell
 uint32_t simNextSwitchMs = 0;
 
 void writeChannel(uint8_t pin, uint8_t level) {
@@ -76,16 +78,26 @@ bool activity() {
     if (simulate) {
         if (static_cast<int32_t>(now - simNextSwitchMs) >= 0) {
             simState = random(2);
-            simNextSwitchMs = now + random(0, 2000);
+            // With HDDSynthPro support, one burst in three is a longer
+            // sequential transfer.
+            simSequential = simState && settings && settings->hddSynthPro && random(3) == 0;
+            simNextSwitchMs = now + (simSequential ? random(2000, 6000) : random(0, 2000));
         }
         return simState;
     }
-    if (digitalRead(cfg::PIN_ACTIVITY) == LOW) {
+    const bool raw = hddlink::present() ? hddlink::state().busy : digitalRead(cfg::PIN_ACTIVITY) == LOW;
+    if (raw) {
         lastActiveMs = now;
         return true;
     }
     const uint32_t hold = settings ? settings->accessHoldMs : 100;
     return lastActiveMs != 0 && (now - lastActiveMs) < hold;
+}
+
+ActivityClass activityClass() {
+    if (simulate) return simSequential ? ActivityClass::Sequential : ActivityClass::Random;
+    if (hddlink::present()) return hddlink::state().cls;
+    return ActivityClass::Random;
 }
 
 } // namespace io

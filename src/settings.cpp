@@ -57,6 +57,8 @@ bool parseSettingsJson(const char* json, Settings& s) {
     if (doc["ACTIVITY_LED_ENABLED"].is<bool>()) s.activityLedEnabled = doc["ACTIVITY_LED_ENABLED"];
     if (doc["RGB_LED_BRIGHTNESS"].is<float>()) s.rgbBrightness = clamp01(doc["RGB_LED_BRIGHTNESS"]);
     parseColour(doc["ACTIVITY_LED_COLOUR"], s.activityLedColour);
+    parseColour(doc["SEQUENTIAL_LED_COLOUR"], s.sequentialLedColour);
+    if (doc["EXPERIMENTAL_HDDSYNTHPRO_SUPPORT"].is<bool>()) s.hddSynthPro = doc["EXPERIMENTAL_HDDSYNTHPRO_SUPPORT"];
     if (doc["RANDOM_SAMPLE_PACK"].is<bool>()) s.randomSamplePack = doc["RANDOM_SAMPLE_PACK"];
     if (doc["ALWAYS_PLAY_JINGLE"].is<bool>()) s.alwaysPlayJingle = doc["ALWAYS_PLAY_JINGLE"];
     if (doc["DEMO_MODE"].is<bool>()) s.demoMode = doc["DEMO_MODE"];
@@ -84,9 +86,9 @@ bool parseSettingsJson(const char* json, Settings& s) {
 
 void printSettings(const Settings& s) {
     Console.printf("[settings] pack='%s' volume=%d%% balance=%d%% sim=%d spinup=%d spindown=%d idle=%d "
-                  "hold=%lums power_detect=%d random_pack=%d always_jingle=%d demo=%d save_levels=%d oled=%d standby_min=%lu\n",
+                  "hold=%lums power_detect=%d random_pack=%d always_jingle=%d demo=%d save_levels=%d oled=%d standby_min=%lu hddsynthpro=%d\n",
                   s.samplePack, static_cast<int>(s.volume * 100 + 0.5f), static_cast<int>(s.balance * 100 + 0.5f), s.simulationMode, s.playSpinup, s.playSpindown,
                   s.playIdle, static_cast<unsigned long>(s.accessHoldMs), s.powerDetection, s.randomSamplePack,
                   s.alwaysPlayJingle, s.demoMode, s.saveVolumeBalance, s.oledEnabled,
-                  static_cast<unsigned long>(s.standbyMinutes));
+                  static_cast<unsigned long>(s.standbyMinutes), s.hddSynthPro);
 }

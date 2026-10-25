@@ -218,6 +218,18 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   it with `LevelFollower` (fast attack, slow release, auto-gain; host-tested).
   Serial `j` replays the jingle (clears its flag and reboots).
 
+- HDDSynthPro activity link (`EXPERIMENTAL_HDDSYNTHPRO_SUPPORT`, v0.18.0),
+  from HDDSynthPro's `docs/hddsynth-activity-link-brief.md`: UART1 RX on
+  J6 pin 3 (GP25; the OLED is forced off), `$HDA` sentences parsed by
+  `link_parser.*` (pure, host-tested), received by `hdd_link.*` on core 0.
+  While present, `io::activity()` uses its busy flag and
+  `io::activityClass()` its class; `AccessChooser` picks `sequential.wav`
+  (`VOICE_SEQUENTIAL`, ring heap-allocated only with the flag, 32 KB) or
+  `access.wav`; `SEQUENTIAL_LED_COLOUR` (orange: full yellow looked green on the LED). Simulation mixes in
+  sequential spells. Verified 2026-10-25 in simulation (sequential.wav
+  streams with no underruns, the LED and sample switch); not yet with real link
+  lines or HDDSynthPro.
+
 **Still to port from the Python firmware:**
 - [x] Rotary encoder: volume / balance, with button toggling the mode
       (`controls.*`, decoding in `quadrature.h`).

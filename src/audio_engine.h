@@ -12,6 +12,7 @@ enum VoiceId : uint8_t {
     VOICE_ACCESS,       // stream, looping
     VOICE_SPINDOWN,     // memory if it fits in RAM, otherwise stream
     VOICE_BEEP,         // memory
+    VOICE_SEQUENTIAL,   // stream, looping (sequential.wav, with EXPERIMENTAL_HDDSYNTHPRO_SUPPORT)
     VOICE_COUNT
 };
 

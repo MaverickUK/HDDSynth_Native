@@ -29,6 +29,8 @@ struct Settings {
     OledMode oledMode = OledMode::Activity;  // OLED_MODE: "activity", "supercap" or "debug"
     uint32_t oledSampleMs = 1000;    // OLED_SAMPLE_MS: time per graph column
     uint32_t standbyMinutes = 0;     // STANDBY_MINUTES: spin down after this long without activity (0 = never)
+    bool hddSynthPro = false;        // EXPERIMENTAL_HDDSYNTHPRO_SUPPORT: activity link on J6, sequential.wav
+    uint8_t sequentialLedColour[3] = {255, 24, 0};  // SEQUENTIAL_LED_COLOUR (orange): during sequential transfers (link only)
 };
 
 // Parse JSON text into `s` (unknown keys ignored, bad values keep defaults).

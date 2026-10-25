@@ -26,6 +26,8 @@ constexpr uint8_t PIN_ENC_B         = 21;
 constexpr uint8_t PIN_ENC_BUTTON    = 22;
 constexpr uint8_t PIN_OLED_SDA      = 24;  // J6 pin 4 (I2C0)
 constexpr uint8_t PIN_OLED_SCL      = 25;  // J6 pin 3
+constexpr uint8_t PIN_LINK_RX       = 25;  // J6 pin 3 again: UART1 RX from HDDSynthPro (instead of the OLED)
+constexpr uint8_t PIN_LINK_TX       = 24;  // J6 pin 4: UART1 TX, reserved (not used yet)
 constexpr uint8_t PIN_SUPERCAP_ADC  = 27;  // ADC1, via 22k/22k divider
 constexpr uint8_t PIN_POWER_FLT     = 28;  // eFuse /FLT, open drain, external pull-up. LOW = fault
 
@@ -59,6 +61,9 @@ constexpr uint32_t BUTTON_DEBOUNCE_MS   = 20;
 constexpr uint32_t ACCESS_JUMP_QUIET_MS = 50;  // after a burst, wait this long (well past the 8 ms fade) before moving the silent access loop
 constexpr uint32_t ACTION_SHORT_PRESS_MAX_MS = 1000;  // ACTION_BUTTON_SHORT_PRESS_MAX_S
 constexpr uint32_t ACTION_LONG_PRESS_MS      = 3000;  // ACTION_BUTTON_LONG_PRESS_S
+
+// ---- HDDSynthPro activity link ----
+constexpr uint32_t LINK_BAUD = 115200;
 
 // ---- Jingle light show ----
 constexpr uint32_t JINGLE_RAINBOW_MS   = 1500;  // one trip round the colour wheel

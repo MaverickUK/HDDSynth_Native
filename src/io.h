@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+#include "link_parser.h"
 #include "settings.h"
 
 namespace io {
@@ -19,8 +20,13 @@ void hddLed(bool on);
 void ledsOffForLowPower();
 
 // Activity with fast attack / slow release (ACCESS_HOLD_TIME_MS), or
-// random simulated activity when SIMULATION_MODE is on.
+// random simulated activity when SIMULATION_MODE is on. While the
+// HDDSynthPro link is present, its busy flag replaces the activity input.
 bool activity();
+// What kind of activity: from the link while present, Random without it.
+// Simulation (with EXPERIMENTAL_HDDSYNTHPRO_SUPPORT on) mixes in longer
+// sequential spells, so sequential.wav can be heard without HDDSynthPro.
+ActivityClass activityClass();
 void setSimulation(bool on);
 bool simulation();
 

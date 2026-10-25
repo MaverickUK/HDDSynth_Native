@@ -101,6 +101,7 @@ spindowns.
 /samples/<pack>/access.wav
 /samples/<pack>/spindown.wav
 /samples/<pack>/pack.json optional, see below
+/samples/<pack>/sequential.wav  optional, see HDDSynthPro activity link
 /powerlog.bin             created by the firmware (power-loss log)
 /state.bin                created by the firmware (saved volume/balance)
 ```
@@ -110,7 +111,7 @@ firmware, so existing cards keep working. A pack is any folder in
 `/samples` (name up to 63 characters); packs are used in alphabetical order.
 
 **WAV files:** mono, 16-bit PCM at **16000, 22050, 32000, 44100 or 48000
-Hz**. All four of a pack's WAVs must use the same rate (the audio output
+Hz**. All of a pack's WAVs must use the same rate (the audio output
 switches to it when the pack loads); a pack that mixes rates is reported as
 broken, and the log names the mismatched files. The jingle may use any of
 those rates. Higher rates sound crisper but cost RAM and SD bandwidth: the
@@ -182,6 +183,8 @@ default. For example:
 | `OLED_ENABLED` | `false` | Use an SSD1306 128x64 I2C OLED on header J6, see [OLED display](#oled-display). *(New.)* |
 | `OLED_MODE` | `"activity"` | The OLED's main screen: `"activity"`, `"supercap"` or `"debug"`. *(New.)* |
 | `OLED_SAMPLE_MS` | `1000` | Time covered by each column of the activity and supercap graphs (minimum 50). *(New.)* |
+| `EXPERIMENTAL_HDDSYNTHPRO_SUPPORT` | `false` | Listen for the activity link from an HDDSynthPro on J6 and play `sequential.wav` during sequential transfers, see [HDDSynthPro activity link](#hddsynthpro-activity-link-experimental). Turns the OLED off (same header). *(New, experimental.)* |
+| `SEQUENTIAL_LED_COLOUR` | `"#FF1800"` (orange) | Activity LED colour during sequential transfers, with `EXPERIMENTAL_HDDSYNTHPRO_SUPPORT` on (a debugging aid). Same format as `ACTIVITY_LED_COLOUR`. *(New.)* |
 
 **Demo mode:** each pack spins up, plays idle/access with simulated HDD
 activity for 60 seconds, plays its spindown, and hands over to the next
@@ -220,6 +223,43 @@ switches off on power loss, to save the supercap's energy for the spindown.
 These are rendered by the host tests from the same drawing code the firmware
 uses (with made-up data). To regenerate them:
 `HDDSYNTH_PREVIEW_DIR=docs/oled test/run_native_tests.sh && python3 test/pbm_to_png.py docs/oled`.
+
+## HDDSynthPro activity link (experimental)
+
+[HDDSynthPro](https://github.com/MaverickUK/HDDSynthPro) emulates an IDE
+hard disk, so it knows exactly what the drive is doing, not just when its
+activity LED is lit. With `"EXPERIMENTAL_HDDSYNTHPRO_SUPPORT": true` the
+HDD Synth listens for it on header **J6** (instead of an OLED):
+
+| J6 pin | Signal | Connect to |
+|---|---|---|
+| 1 | 3.3 V | nothing: each board has its own supply |
+| 2 | GND | HDDSynthPro GND |
+| 3 | GP25, UART1 RX | HDDSynthPro's link TX, through a 1 kΩ resistor at its end |
+| 4 | GP24, UART1 TX | nothing (reserved) |
+
+It's a one-way UART at 115200 baud, 8N1, carrying lines like
+`$HDA,1,1,S,R*4C` (busy, sequential, reading); the protocol is in
+HDDSynthPro's `docs/activity-link.md`. While valid lines arrive:
+
+- the link's busy flag drives the access sound instead of the activity
+  input (with the same `ACCESS_HOLD_TIME_MS` release);
+- during **sequential** transfers (e.g. a large file copy) the pack's
+  `sequential.wav` plays instead of `access.wav`, and the activity LED turns
+  `SEQUENTIAL_LED_COLOUR` (orange by default). A pack without
+  `sequential.wav` plays `access.wav` throughout.
+
+`sequential.wav` is optional and follows the same rules as `access.wav`
+(the same format and sample rate as the pack's other files, a seamless
+loop). After a second without a valid line the link counts as lost and the
+activity input takes over again; the log says `[link] up` and `[link] lost`.
+The `s` stats include the link's state and counts of valid and rejected
+lines.
+
+To try it without an HDDSynthPro: with `SIMULATION_MODE` on, one simulated
+burst in three becomes a longer sequential spell. Or connect a 3.3 V
+USB-serial adapter's TX to J6 pin 3 (and GND to pin 2) and paste lines such
+as `$HDA,1,1,S,R*4C` (busy, sequential) and `$HDA,1,0,I,-*28` (idle).
 
 ## Editing the SD card over USB
 
@@ -276,6 +316,7 @@ The rest of the time the RGB LED shows:
 |---|---|
 | Activity colour (default green, `ACTIVITY_LED_COLOUR`) | HDD activity, real or simulated. Off when idle. `ACTIVITY_LED_ENABLED: false` turns this off. |
 | A random colour per pack | HDD activity in demo mode. |
+| Sequential colour (default orange, `SEQUENTIAL_LED_COLOUR`) | Sequential transfers reported by an HDDSynthPro (`EXPERIMENTAL_HDDSYNTHPRO_SUPPORT`). |
 | Rainbow, pulsing with the sound | While the jingle plays. |
 | Off | During the spindown, and once power is lost. |
 

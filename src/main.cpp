@@ -18,6 +18,7 @@
 #include "config.h"
 #include "console.h"
 #include "controls.h"
+#include "hdd_link.h"
 #include "io.h"
 #include "level_follower.h"
 #include "oled.h"
@@ -83,8 +84,14 @@ uint32_t nextCardCheckMs = 0;   // HALTED with no SD card: when to look for one 
 SampleRing ringOneShot;
 SampleRing ringIdle;
 SampleRing ringAccess;
+// sequential.wav's ring: allocated at boot only with
+// EXPERIMENTAL_HDDSYNTHPRO_SUPPORT, so without it the RAM is free as before.
+SampleRing* ringSequential = nullptr;
 
-sd::Stream streamSpinup, streamIdle, streamAccess, streamSpindown;
+sd::Stream streamSpinup, streamIdle, streamAccess, streamSpindown, streamSequential;
+bool haveSequential = false;  // the loaded pack has a usable sequential.wav (else access.wav covers it)
+AccessChooser accessChooser;  // access.wav or sequential.wav, from the link's activity class
+bool ledSequential = false;   // the activity LED shows the sequential colour
 
 int16_t* spindownRam = nullptr;
 uint32_t spindownSamples = 0;
@@ -169,7 +176,7 @@ void beepAndWait(beeps::Type t) {
 // (_halt_on_boot_error() in the CircuitPython firmware).
 void halt(const char* why, beeps::Type error) {
     Console.printf("[fatal] %s\n", why);
-    for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SPINDOWN}) audio::stop(id);
+    for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SEQUENTIAL, VOICE_SPINDOWN}) audio::stop(id);
     beepAndWait(error);
     io::ampOff();
     haltBeep = error;
@@ -192,7 +199,7 @@ void powerTrace(const char* tag, uint32_t intervalMs = 100) {
 // 150 MHz; this cuts it to a fraction, so short outages are ridden out and
 // the supercap drains far more gently. One-way: the exit is a reboot.
 void enterLowPower() {
-    for (sd::Stream* s : {&streamSpinup, &streamIdle, &streamAccess, &streamSpindown}) sd::closeStream(*s);
+    for (sd::Stream* s : {&streamSpinup, &streamIdle, &streamAccess, &streamSequential, &streamSpindown}) sd::closeStream(*s);
     io::ledsOffForLowPower();
     lowPower = true;
     const bool parked = audio::shutdownForLowPower();
@@ -241,6 +248,13 @@ bool startSpindownVoice() {
     return audio::startStream(VOICE_SPINDOWN, &ringOneShot, level);
 }
 
+// Fill the looping voices' rings, ready for enterRun().
+void primeLoops() {
+    if (settings.playIdle) sd::prime(streamIdle);
+    sd::prime(streamAccess);
+    if (haveSequential) sd::prime(streamSequential);
+}
+
 bool restartLoop(VoiceId id, sd::Stream& s, uint16_t level) {
     if (!audio::stop(id)) return false;
     if (!sd::prime(s)) return false;
@@ -265,6 +279,7 @@ void printStats() {
                   static_cast<unsigned long>(audio::maxMixMicros()), audio::i2sUnderflowed());
     printVoice("idle", VOICE_IDLE);
     printVoice("access", VOICE_ACCESS);
+    if (haveSequential) printVoice("sequential", VOICE_SEQUENTIAL);
     printVoice("spindown", VOICE_SPINDOWN);
     Console.printf("\n[stats] sd: chunks=%lu read_err=%lu recoveries=%lu failed_rec=%lu max_read=%luus"
                   " | stress: %s transitions=%lu failures=%lu | supercap=%dmV flt=%d\n",
@@ -274,6 +289,7 @@ void printStats() {
                   static_cast<unsigned long>(stressTransitions), static_cast<unsigned long>(stressFailures),
                   power::supercapMillivolts(), power::fltHigh());
     st.maxReadMicros = 0;
+    hddlink::printStats();
 }
 
 // ---- stress test -------------------------------------------------------------
@@ -398,7 +414,7 @@ void handleSerial() {
                 break;
             }
             case 'j':  // replay the jingle: clear its flag and reboot
-                for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SPINDOWN}) audio::stop(id);
+                for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SEQUENTIAL, VOICE_SPINDOWN}) audio::stop(id);
                 io::ampOff();  // audio stopped: safe to write flash
                 persist::state().jinglePlayed = false;
                 persist::commit();
@@ -433,11 +449,12 @@ void handleSerial() {
 // that rate while the pack is loaded. Checks the files that exist (a missing
 // one is reported where it's needed) and sets packRate.
 bool checkPackRate() {
-    static const char* const files[] = {"idle.wav", "access.wav", "spinup.wav", "spindown.wav"};
+    static const char* const files[] = {"idle.wav", "access.wav", "spinup.wav", "spindown.wav", "sequential.wav"};
     const char* first = nullptr;
     uint32_t rate = 0;
     char p[128];
     for (const char* name : files) {
+        if (!ringSequential && !strcmp(name, "sequential.wav")) continue;  // only used with HDDSynthPro support
         samplePath(p, sizeof(p), name);
         WavInfo w;
         if (!sd::wavInfo(p, w)) continue;
@@ -504,6 +521,12 @@ bool loadPack() {
         Console.printf("[pack] %s is missing idle.wav/access.wav or they are the wrong format\n", pack);
         return false;
     }
+    // sequential.wav is optional: without it, sequential transfers play access.wav.
+    samplePath(p, sizeof(p), "sequential.wav");
+    if (ringSequential && sd::fileExists(p)) {
+        haveSequential = sd::openStream(streamSequential, p, VOICE_SEQUENTIAL, ringSequential, true);
+        Console.printf("[pack] sequential.wav %s\n", haveSequential ? "found" : "unusable, using access.wav");
+    }
     samplePath(p, sizeof(p), "spindown.wav");
     if (!FORCE_STREAMED_SPINDOWN && sd::loadToRam(p, spindownRam, spindownSamples)) {
         Console.printf("[pack] spindown in RAM (%lu ms)\n", static_cast<unsigned long>(samplesToMs(spindownSamples)));
@@ -517,6 +540,8 @@ bool loadPack() {
 void unloadPack() {
     sd::closeStream(streamIdle);
     sd::closeStream(streamAccess);
+    sd::closeStream(streamSequential);
+    haveSequential = false;
     sd::closeStream(streamSpindown);
     free(spindownRam);
     spindownRam = nullptr;
@@ -526,7 +551,7 @@ void unloadPack() {
 
 void stopPackVoices() {
     stopStress();
-    for (VoiceId id : {VOICE_IDLE, VOICE_ACCESS, VOICE_SPINDOWN}) audio::stop(id);
+    for (VoiceId id : {VOICE_IDLE, VOICE_ACCESS, VOICE_SEQUENTIAL, VOICE_SPINDOWN}) audio::stop(id);
     io::rgbOff();
     io::hddLed(false);
     lastAccess = false;
@@ -617,8 +642,7 @@ void changePack(bool spinUp) {
         startSpinup();  // e.g. out of standby: spin up like a real drive
         return;
     }
-    if (settings.playIdle) sd::prime(streamIdle);
-    sd::prime(streamAccess);
+    primeLoops();
     enterRun();
 }
 
@@ -703,6 +727,15 @@ void boot() {
         oled::begin(settings);
         oled::showMessage("USB drive", "SD card shared over", "USB. Eject to finish.");
         usbdrive::run();  // reboots when done
+    }
+    if (settings.hddSynthPro) {
+        // The link uses the OLED's pins on J6, so the two can't share them.
+        if (settings.oledEnabled) {
+            Console.println("[link] EXPERIMENTAL_HDDSYNTHPRO_SUPPORT uses J6: OLED off");
+            settings.oledEnabled = false;
+        }
+        hddlink::begin();
+        ringSequential = new SampleRing;  // before the pack loads, so the spindown's RAM check counts it
     }
     power::begin(settings.powerDetection);
     powerlog::begin();
@@ -815,8 +848,7 @@ void startSpinup() {
         Console.println("[boot] spinup");
     }
     // Fill the loop rings while spinup plays, so RUN starts seamlessly.
-    if (settings.playIdle) sd::prime(streamIdle);
-    sd::prime(streamAccess);
+    primeLoops();
     state = State::Spinup;
 }
 
@@ -825,6 +857,7 @@ void enterRun() {
     if (!spindownRam) armSpindown();
     if (settings.playIdle) audio::startStream(VOICE_IDLE, &ringIdle, idleLevel());
     audio::startStream(VOICE_ACCESS, &ringAccess, 0);
+    if (haveSequential) audio::startStream(VOICE_SEQUENTIAL, ringSequential, 0);
     Console.println("[run] idle/access looping");
     audio::i2sUnderflowed();  // clear the flag left by I2S starting before audio existed
     nextStatsMs = millis() + 5000;
@@ -843,6 +876,7 @@ void enterSpindown() {
     stopStress();
     audio::stop(VOICE_IDLE);
     audio::stop(VOICE_ACCESS);
+    audio::stop(VOICE_SEQUENTIAL);
     if (!audio::isIdle(VOICE_SPINUP)) audio::stop(VOICE_SPINUP);
     sd::closeStream(streamSpinup);  // frees the one-shot ring for a streamed spindown
     io::rgbOff();
@@ -857,15 +891,20 @@ void enterSpindown() {
     state = State::Spindown;
 }
 
-// Move the (silent) access loop to a random point. Refilling its ring takes
-// ~20 ms of SD reads, all during the quiet after a burst.
-void jumpAccess() {
-    if (!audio::stop(VOICE_ACCESS)) return;  // silent: its level is already 0
-    const uint32_t frames = streamAccess.info.dataBytes / 2;
+// Move a (silent) access or sequential loop to a random point. Refilling its
+// ring takes ~20 ms of SD reads, all during the quiet after a burst.
+void jumpLoop(VoiceId id, sd::Stream& s) {
+    if (!audio::stop(id)) return;  // silent: its level is already 0
+    const uint32_t frames = s.info.dataBytes / 2;
     const uint32_t frame = frames ? static_cast<uint32_t>(random(frames)) : 0;
-    if (!sd::prime(streamAccess, frame * 2) || !audio::startStream(VOICE_ACCESS, &ringAccess, 0)) {
-        Console.println("[access] couldn't move the access loop");
+    if (!sd::prime(s, frame * 2) || !audio::startStream(id, s.ring, 0)) {
+        Console.printf("[access] couldn't move the %s loop\n", id == VOICE_SEQUENTIAL ? "sequential" : "access");
     }
+}
+
+void jumpAccess() {
+    jumpLoop(VOICE_ACCESS, streamAccess);
+    if (haveSequential) jumpLoop(VOICE_SEQUENTIAL, streamSequential);
 }
 
 void runStep() {
@@ -881,16 +920,24 @@ void runStep() {
         accessJumpPending = false;
         jumpAccess();
     }
-    if (active != lastAccess || beepEnded) {
+    // With HDDSynthPro support: sequential.wav during sequential transfers
+    // (access.wav if the pack has none), and the LED in its own colour. The
+    // 8 ms level fade covers a switch between the two mid-burst.
+    const AccessSample sample = accessChooser.choose(io::activityClass(), haveSequential);
+    const bool seqLed = settings.hddSynthPro && accessChooser.sequential();
+    if (active != lastAccess || beepEnded || (active && seqLed != ledSequential)) {
         lastAccess = active;
+        ledSequential = seqLed;
         io::hddLed(active);
         if (settings.activityLedEnabled && !beeps::active()) {
-            if (active) io::rgb(settings.activityLedColour[0], settings.activityLedColour[1], settings.activityLedColour[2]);
+            const uint8_t* c = seqLed ? settings.sequentialLedColour : settings.activityLedColour;
+            if (active) io::rgb(c[0], c[1], c[2]);
             else io::rgbOff();
         }
     }
     audio::setLevel(VOICE_IDLE, idleLevel());
-    audio::setLevel(VOICE_ACCESS, accessLevel(active));
+    audio::setLevel(VOICE_ACCESS, accessLevel(active && sample == AccessSample::Access));
+    if (haveSequential) audio::setLevel(VOICE_SEQUENTIAL, accessLevel(active && sample == AccessSample::Sequential));
     if (stressOn) stressStep();
 }
 
@@ -912,6 +959,7 @@ void loop() {
     feedWatchdog();
     checkCore1();
     handleSerial();
+    hddlink::service();
 
     switch (state) {
         case State::Boot:

@@ -27,6 +27,7 @@
 #include "crc32.h"
 #include "level_follower.h"
 #include "levels_format.h"
+#include "link_parser.h"
 #include "persist_format.h"
 #include "powerlog_format.h"
 #include "quadrature.h"
@@ -1003,6 +1004,141 @@ TEST(oled_screens_render) {
     preview(c, "supercap");
 }
 
+// ---- HDDSynthPro activity link ---------------------------------------------
+
+static bool parseLine(const char* line, LinkState& out) { return parseLinkSentence(line, strlen(line), out); }
+
+// Feed a string; returns how many valid sentences it completed.
+static int feedAll(LinkParser& p, const char* text) {
+    int n = 0;
+    for (const char* c = text; *c; ++c) n += p.feed(*c);
+    return n;
+}
+
+TEST(link_known_answers) {
+    LinkState s;
+    CHECK(parseLine("$HDA,1,0,I,-*28", s));
+    CHECK(!s.busy && s.cls == ActivityClass::Idle && s.op == LinkOp::None);
+    CHECK(parseLine("$HDA,1,1,S,R*4C", s));
+    CHECK(s.busy && s.cls == ActivityClass::Sequential && s.op == LinkOp::Read);
+    CHECK(parseLine("$HDA,1,1,R,W*48", s));
+    CHECK(s.busy && s.cls == ActivityClass::Random && s.op == LinkOp::Write);
+    CHECK(parseLine("$HDA,1,1,S,W*49", s));
+    CHECK(s.busy && s.cls == ActivityClass::Sequential && s.op == LinkOp::Write);
+    CHECK(parseLine("$HDA,1,0,R,R*4C", s));
+    CHECK(!s.busy && s.cls == ActivityClass::Random && s.op == LinkOp::Read);
+}
+
+TEST(link_rejects_bad_sentences) {
+    LinkState s;
+    s.busy = true;
+    CHECK(!parseLine("$HDA,1,0,I,-*29", s));     // wrong checksum
+    CHECK(s.busy);                               // and the output is left alone
+    CHECK(!parseLine("$HDA,1,0,I,-28", s));      // no '*'
+    CHECK(!parseLine("$HDA,1,0,I,-*2", s));      // one checksum digit
+    CHECK(!parseLine("$HDA,1,0,I,-*28X", s));    // three
+    CHECK(!parseLine("$HDA,1,0,I,-*2G", s));     // not hex
+    CHECK(!parseLine("$HDA,2,0,I,-*2B", s));     // version 2 (valid checksum)
+    CHECK(!parseLine("$HDB,1,0,I,-*2B", s));     // another sentence (valid checksum)
+    CHECK(!parseLine("$GPGGA,1,2*55", s));
+    CHECK(!parseLine("$HDA,1,2,I,-*2A", s));     // busy must be 0 or 1
+    CHECK(!parseLine("$HDA,1,0,X,-*39", s));     // unknown class
+    CHECK(!parseLine("$HDA,1,0,I,X*5D", s));     // unknown op
+    CHECK(!parseLine("$HDA,1,0,II,-*61", s));    // two-character field
+    CHECK(!parseLine("HDA,1,0,I,-*28", s));      // no '$'
+    CHECK(!parseLine("", s));
+}
+
+TEST(link_accepts_lower_case_hex_and_extra_fields) {
+    LinkState s;
+    CHECK(parseLine("$HDA,1,1,S,R*4c", s));
+    CHECK(s.busy && s.cls == ActivityClass::Sequential);
+    // A later version's extra fields at the end (checksum over all of it).
+    CHECK(parseLine("$HDA,1,1,R,W,42,foo*28", s));
+    CHECK(s.busy && s.cls == ActivityClass::Random && s.op == LinkOp::Write);
+}
+
+TEST(link_parser_assembles_lines) {
+    LinkParser p;
+    // Split across feeds, CRLF.
+    CHECK_EQ(feedAll(p, "$HDA,1,1,"), 0);
+    CHECK_EQ(feedAll(p, "S,R*4C\r\n"), 1);
+    CHECK(p.state().busy && p.state().cls == ActivityClass::Sequential);
+    // Two in one feed, and '\n' without '\r'.
+    CHECK_EQ(feedAll(p, "$HDA,1,0,I,-*28\r\n$HDA,1,1,R,W*48\n"), 2);
+    CHECK(p.state().busy && p.state().cls == ActivityClass::Random);
+    CHECK_EQ(p.valid(), 3u);
+    CHECK_EQ(p.rejected(), 0u);
+    // Noise before a '$' is dropped without counting; a bad line is counted.
+    CHECK_EQ(feedAll(p, "\xff\x7fgarbage\r\n$HDA,1,0,I,-*29\r\n"), 0);
+    CHECK_EQ(p.rejected(), 1u);
+    CHECK(p.state().busy);  // unchanged by the bad line
+    // A '$' mid-line starts over: the cut-off sentence is rejected.
+    CHECK_EQ(feedAll(p, "$HDA,1,1,S$HDA,1,0,I,-*28\r\n"), 1);
+    CHECK_EQ(p.rejected(), 2u);
+    CHECK(!p.state().busy);
+}
+
+TEST(link_parser_drops_long_lines) {
+    LinkParser p;
+    std::string longLine = "$HDA,1,1,S,R";
+    while (longLine.size() < 81) longLine += ",x";
+    longLine.resize(81);  // 81 characters before the line ending
+    CHECK_EQ(feedAll(p, (longLine + "\r\n").c_str()), 0);
+    CHECK_EQ(p.rejected(), 1u);
+    CHECK_EQ(feedAll(p, "$HDA,1,1,S,R*4C\r\n"), 1);  // and the next one is fine
+    // Exactly 80 (with extra fields and a correct checksum) is accepted.
+    std::string body = "HDA,1,1,S,R";
+    while (body.size() < 76) body += ",y";
+    body.resize(76);  // '$' + 76 + "*hh" = 80
+    unsigned sum = 0;
+    for (char c : body) sum ^= static_cast<unsigned char>(c);
+    char tail[8];
+    std::snprintf(tail, sizeof(tail), "*%02X\r\n", sum);
+    CHECK_EQ(feedAll(p, ("$" + body + tail).c_str()), 1);
+}
+
+TEST(link_watch_timeout) {
+    LinkWatch w;
+    CHECK(!w.present(0));
+    CHECK(!w.present(5000));
+    w.seen(10000);
+    CHECK(w.present(10000));
+    CHECK(w.present(10999));
+    CHECK(!w.present(11000));  // lost after 1 s
+    w.seen(12000);
+    CHECK(w.present(12500));   // and back
+    w.seen(0xFFFFFF00u);       // millis() wrapping round
+    CHECK(w.present(0x100u));
+}
+
+TEST(link_access_sample_choice) {
+    {   // Without a link the class is always Random: access.wav, as before.
+        AccessChooser c;
+        CHECK(c.choose(ActivityClass::Random, true) == AccessSample::Access);
+        CHECK(!c.sequential());
+    }
+    {   // Sequential plays sequential.wav when the pack has one...
+        AccessChooser c;
+        CHECK(c.choose(ActivityClass::Sequential, true) == AccessSample::Sequential);
+        CHECK(c.sequential());
+        CHECK(c.choose(ActivityClass::Random, true) == AccessSample::Access);
+    }
+    {   // ...and access.wav when it doesn't (the LED still knows it's sequential).
+        AccessChooser c;
+        CHECK(c.choose(ActivityClass::Sequential, false) == AccessSample::Access);
+        CHECK(c.sequential());
+    }
+    {   // Idle doesn't change the choice: the last busy class sticks.
+        AccessChooser c;
+        CHECK(c.choose(ActivityClass::Idle, true) == AccessSample::Access);
+        c.choose(ActivityClass::Sequential, true);
+        CHECK(c.choose(ActivityClass::Idle, true) == AccessSample::Sequential);
+        c.choose(ActivityClass::Random, true);
+        CHECK(c.choose(ActivityClass::Idle, true) == AccessSample::Access);
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -1061,6 +1197,13 @@ int main(int argc, char** argv) {
     RUN(mixer_restart_rewinds);
     RUN(mixer_stream_underrun_and_eof);
     RUN(mixer_stream_two_threads_no_gaps);
+    RUN(link_known_answers);
+    RUN(link_rejects_bad_sentences);
+    RUN(link_accepts_lower_case_hex_and_extra_fields);
+    RUN(link_parser_assembles_lines);
+    RUN(link_parser_drops_long_lines);
+    RUN(link_watch_timeout);
+    RUN(link_access_sample_choice);
     std::printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }
