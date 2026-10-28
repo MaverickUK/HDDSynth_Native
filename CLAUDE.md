@@ -102,6 +102,16 @@ or file I/O, and never block core 1.
   only during boot, or with audio deliberately stopped.
 - **I2S IRQ placement:** `i2s.begin()` is called in `setup1()` so its DMA
   IRQ is serviced on core 1.
+- **SD card across resets:** the card stays powered through any reset of
+  the RP2350, and with `DEDICATED_SPI` SdFat leaves multi-block reads and
+  writes open between calls. A card reset mid-write ignores CMD0 until its
+  power is cut: "no SD card" until it's reinserted (a beta tester hit this
+  at ~1 boot in 5 after short PC power-offs, v0.18.0; reproduced 7 of 8
+  simulated cuts, where our card just needed a second try). So every planned
+  reboot goes through `reboot()` in main.cpp (and usb_drive.cpp calls
+  `sd::finishTransfers()`), `sd::writeSector()` closes each write, and
+  `cardResponds()` sends the stop token and CMD12 before retrying CMD0 (for
+  unplanned resets; not yet exercised on hardware, as our card never needed it).
 - **Unit tests:** host-side tests run with plain `c++` (not `pio test`):
   `test/run_native_tests.sh [path/to/HDDSynth_Samples]`. They use
   ASan/UBSan; also run them under TSan when touching the ring buffer or the

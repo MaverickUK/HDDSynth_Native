@@ -6,6 +6,24 @@ follow [Semantic Versioning](https://semver.org). Linked versions have a
 release with its UF2 on the
 [releases page](https://github.com/MaverickUK/HDDSynth_Native/releases).
 
+## [0.18.1] - 2026-10-28
+
+### Fixed
+- **"No SD card" (one short beep, then red flashes) at about one boot in
+  five, after the PC had been off briefly.** Reported by a beta tester on
+  two PCs; reinserting the card fixed it. While the PC is off the board
+  runs on the supercap and writes its power-loss log to the card, and the
+  SD library left that write open between sectors. When power came back
+  within the supercap's hold time the board rebooted with the write still
+  open; the card, still powered, kept waiting for data and ignored the next
+  boot until its power was cut. Now every reboot, and every power-log
+  sector, leaves the card idle.
+- The card check at boot also rescues a card that a reset left
+  mid-transfer, then gives the SD library's own, slower start-up a last try
+  before giving up. A board halted with "no SD card" tries that too, every
+  10 s, and the log records what the card answered. The SD stats count
+  rescues (`rescued=`).
+
 ## [0.18.0] - 2026-10-25
 
 ### Added
@@ -191,6 +209,7 @@ v0.13.0.)
 ### Fixed
 - Recovery from SD card removal without blocking or rebooting.
 
+[0.18.1]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.18.1
 [0.18.0]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.18.0
 [0.17.1]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.17.1
 [0.17.0]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.17.0

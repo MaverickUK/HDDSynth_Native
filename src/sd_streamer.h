@@ -28,11 +28,13 @@ struct Stats {
     uint32_t readErrors = 0;     // failed reads (each retry counts)
     uint32_t recoveries = 0;     // card remounted after being down
     uint32_t failedRecoveries = 0;  // a card answered but would not mount
+    uint32_t rescues = 0;        // the probe found the card left mid-transfer by a reset, and stopped it
     uint32_t maxReadMicros = 0;  // worst single chunk read since last reset
 };
 
 bool begin();                       // init SPI1 + card + filesystem; retries for cfg::SD_BOOT_RETRY_MS
 bool present();                     // a card answers (quick probe; doesn't mount)
+bool mountsNow();                   // SdFat's full init works (up to 2 s; leaves it unmounted)
 bool cardOk();                      // false while the card is down
 
 // Open a WAV for streaming into `ring` for `voice`. Validates the format.
@@ -73,6 +75,10 @@ bool writeSector(uint32_t sector, const uint8_t* src);
 uint32_t cardSectors();
 bool readSectors(uint32_t sector, uint8_t* dst, size_t count);
 bool writeSectors(uint32_t sector, const uint8_t* src, size_t count);
+// End any multi-block read or write SdFat has left open, so the card is idle.
+// Call before a reboot: the card stays powered through it, and one left
+// mid-write ignores the next boot's CMD0 until its power is cut.
+void finishTransfers();
 
 // Print a directory's entries (name, size) to Serial, for the 'd' command.
 void listDir(const char* path);

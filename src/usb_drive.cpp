@@ -89,6 +89,7 @@ void run() {
     }
     shared = false;
     flushWrite();
+    sd::finishTransfers();  // the card stays powered through the reboot: leave it idle
     Console.println(ejected ? "[usb] ejected, rebooting" : "[usb] button pressed, rebooting");
     Serial.flush();
     delay(300);  // let the host see the last command complete

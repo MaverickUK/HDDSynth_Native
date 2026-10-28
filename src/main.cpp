@@ -78,6 +78,7 @@ uint8_t settingsLedColour[3] = {0};  // settings.json's activity colour, for pac
 beeps::Type haltBeep = beeps::Type::NoSdCard;  // the error the red LED repeats in HALTED
 bool haltButtonSeenUp = false;  // HALTED: the action button has been released since (guards factory reset)
 uint32_t nextCardCheckMs = 0;   // HALTED with no SD card: when to look for one again
+uint32_t cardChecks = 0;        // ...and how many times it has
 
 // One shared ring for the one-shot samples (spinup at boot, spindown if it
 // has to stream), plus one per looping voice.
@@ -136,6 +137,16 @@ bool startJingle();
 
 void feedWatchdog() {
     if (!core1Stalled) rp2040.wdt_reset();
+}
+
+// Every planned reboot goes through here. The SD card stays powered through
+// it, so leave it idle: one left mid-transfer ignores the next boot's CMD0.
+[[noreturn]] void reboot(bool toBootloader = false) {
+    sd::finishTransfers();
+    Serial.flush();
+    if (toBootloader) rp2040.rebootToBootloader();
+    else rp2040.reboot();
+    for (;;) {}
 }
 
 void checkCore1() {
@@ -281,11 +292,11 @@ void printStats() {
     printVoice("access", VOICE_ACCESS);
     if (haveSequential) printVoice("sequential", VOICE_SEQUENTIAL);
     printVoice("spindown", VOICE_SPINDOWN);
-    Console.printf("\n[stats] sd: chunks=%lu read_err=%lu recoveries=%lu failed_rec=%lu max_read=%luus"
+    Console.printf("\n[stats] sd: chunks=%lu read_err=%lu recoveries=%lu failed_rec=%lu rescued=%lu max_read=%luus"
                   " | stress: %s transitions=%lu failures=%lu | supercap=%dmV flt=%d\n",
                   static_cast<unsigned long>(st.chunksRead), static_cast<unsigned long>(st.readErrors),
                   static_cast<unsigned long>(st.recoveries), static_cast<unsigned long>(st.failedRecoveries),
-                  static_cast<unsigned long>(st.maxReadMicros), stressOn ? "ON" : "off",
+                  static_cast<unsigned long>(st.rescues), static_cast<unsigned long>(st.maxReadMicros), stressOn ? "ON" : "off",
                   static_cast<unsigned long>(stressTransitions), static_cast<unsigned long>(stressFailures),
                   power::supercapMillivolts(), power::fltHigh());
     st.maxReadMicros = 0;
@@ -419,8 +430,7 @@ void handleSerial() {
                 persist::state().jinglePlayed = false;
                 persist::commit();
                 Console.println("[boot] jingle flag cleared, rebooting");
-                Serial.flush();
-                rp2040.reboot();
+                reboot();
                 break;
             case 'm':  // demo mode on/off without editing settings.json (not saved)
                 settings.demoMode = !settings.demoMode;
@@ -432,8 +442,8 @@ void handleSerial() {
                 }
                 Console.printf("[demo] %s\n", settings.demoMode ? "on" : "off");
                 break;
-            case 'r': rp2040.reboot(); break;
-            case 'b': rp2040.rebootToBootloader(); break;
+            case 'r': reboot(); break;
+            case 'b': reboot(/*toBootloader*/ true); break;
             default: break;
         }
     }
@@ -656,8 +666,7 @@ void factoryReset() {
     savedlevels::clear();
     persist::state() = PersistedState{};
     persist::commit();
-    Serial.flush();
-    rp2040.reboot();
+    reboot();
 }
 
 // RANDOM_SAMPLE_PACK: pick any pack except the one used last time (when
@@ -1061,8 +1070,7 @@ void loop() {
             power::waitForRestore(waitPowerIdle);
             powerlog::logf("[power] restarting");
             powerlog::flush();
-            Serial.flush();
-            rp2040.reboot();
+            reboot();
             break;
 
         case State::Halted:
@@ -1072,13 +1080,14 @@ void loop() {
             // stuck or floating input can't trigger one.
             if (digitalRead(cfg::PIN_ACTION_BUTTON) == HIGH) haltButtonSeenUp = true;
             if (controls::poll() == controls::Action::FactoryReset && haltButtonSeenUp) factoryReset();
-            // No SD card: keep looking, and start over once one answers.
+            // No SD card: keep looking, and start over once one answers. The
+            // quick probe every 2 s; every 10 s SdFat's full init too, which
+            // blocks up to 2 s (only the LED pattern pauses).
             if (haltBeep == beeps::Type::NoSdCard && static_cast<int32_t>(millis() - nextCardCheckMs) >= 0) {
                 nextCardCheckMs = millis() + 2000;
-                if (sd::present()) {
+                if (sd::present() || (++cardChecks % 5 == 0 && sd::mountsNow())) {
                     Console.println("[sd] card found, restarting");
-                    Serial.flush();
-                    rp2040.reboot();
+                    reboot();
                 }
             }
             // Repeat the error's beep pattern in red so a headless unit shows

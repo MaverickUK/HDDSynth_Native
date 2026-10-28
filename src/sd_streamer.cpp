@@ -101,10 +101,33 @@ bool reopenAll() {
     return true;
 }
 
-// Quick check for a card: send CMD0 (GO_IDLE_STATE) and look for the 0x01
-// reply. Takes well under 1 ms with or without a card. card.begin() instead
-// waits up to 2 s for an absent card, longer than the watchdog allows, and
-// power-loss detection would be blind for that time.
+uint8_t lastProbeReply = 0xFF;  // the last probe's CMD0 reply, for the "no SD card" log
+
+// Send a command with a zero argument and return its R1 reply, read as
+// SdFat does: skip one byte, then up to 9 fill bytes (bit 7 set).
+uint8_t probeCommand(uint8_t cmd, uint8_t crc) {
+    const uint8_t b[] = {static_cast<uint8_t>(0x40 | cmd), 0, 0, 0, 0, crc};
+    for (uint8_t x : b) SPI1.transfer(x);
+    SPI1.transfer(0xFF);
+    uint8_t r1 = 0xFF;
+    for (int i = 0; i < 9 && (r1 & 0x80); ++i) r1 = SPI1.transfer(0xFF);
+    return r1;
+}
+
+// Quick check for a card: CMD0 (GO_IDLE_STATE) and its 0x01 reply. A few ms
+// with or without a card. card.begin() instead waits up to 2 s for an absent
+// card, longer than the watchdog allows, and power-loss detection would be
+// blind for that time.
+//
+// A reset that doesn't power the card off (a reboot, the watchdog, RUN, a
+// dip that only resets the RP2350) can leave the card mid-transfer: still
+// streaming a multi-block read, or busy finishing a write. It then answers
+// with data or busy bytes instead of 0x01, or (mid-write, waiting for the
+// next data block) ignore CMD0 altogether until its power is cut. So if
+// CMD0 fails, end any write (the stop token) and any read (CMD12), let the
+// card finish, and try CMD0 a few more times. (CMD0 still goes first: it's
+// the command a freshly powered card expects.) finishTransfers() before a
+// planned reboot avoids all this; this covers unplanned resets.
 bool cardResponds() {
     setSpiPins();
     pinMode(cfg::PIN_SD_CS, OUTPUT);
@@ -113,15 +136,32 @@ bool cardResponds() {
     SPI1.beginTransaction(SPISettings(cfg::SD_PROBE_HZ, MSBFIRST, SPI_MODE0));
     for (int i = 0; i < 10; ++i) SPI1.transfer(0xFF);  // 80 clocks with CS high: wake up
     digitalWrite(cfg::PIN_SD_CS, LOW);
-    const uint8_t cmd0[] = {0x40, 0x00, 0x00, 0x00, 0x00, 0x95};
-    for (uint8_t b : cmd0) SPI1.transfer(b);
-    uint8_t r1 = 0xFF;
-    for (int i = 0; i < 16 && r1 == 0xFF; ++i) r1 = SPI1.transfer(0xFF);
+    // CRCs are real: a card left in SPI mode by SdFat (USE_SD_CRC) checks them.
+    lastProbeReply = probeCommand(0, 0x95);
+    bool ok = lastProbeReply == 0x01;
+    if (!ok) {
+        auto waitNotBusy = [] { for (int i = 0; i < 2000 && SPI1.transfer(0xFF) != 0xFF; ++i) {} };  // up to ~40 ms
+        waitNotBusy();
+        SPI1.transfer(0xFD);     // stop token: ends a multi-block write; ignored otherwise
+        SPI1.transfer(0xFF);
+        waitNotBusy();
+        probeCommand(12, 0x61);  // STOP_TRANSMISSION: ends a multi-block read; an idle card refuses it
+        waitNotBusy();
+        for (int attempt = 0; attempt < 8 && !ok; ++attempt) {
+            for (int i = 0; i < 32; ++i) SPI1.transfer(0xFF);  // clock out whatever it's still sending
+            lastProbeReply = probeCommand(0, 0x95);
+            ok = lastProbeReply == 0x01;
+        }
+        if (ok) {
+            st.rescues++;
+            Console.println("[sd] card was left mid-transfer (by a reset); stopped it");
+        }
+    }
     digitalWrite(cfg::PIN_SD_CS, HIGH);
     SPI1.transfer(0xFF);
     SPI1.endTransaction();
     SPI1.end();
-    return r1 == 0x01;
+    return ok;
 }
 
 // After repeated read failures: close everything and mark the card down.
@@ -224,10 +264,21 @@ bool begin() {
         }
         delay(100);
     } while (millis() - t0 < cfg::SD_BOOT_RETRY_MS);
-    return false;
+    // Never answered the probe: say what it did answer, and give SdFat's own,
+    // slower init (2 s of CMD0 retries) a last go before giving up.
+    Console.printf("[sd] no answer to the probe after %d attempts (CMD0 reply 0x%02X; 0xFF = nothing)\n", attempts,
+                   lastProbeReply);
+    return mount();
 }
 
 bool present() { return cardResponds(); }
+
+bool mountsNow() {
+    const bool ok = mount();
+    card.end();
+    mounted = false;
+    return ok;
+}
 
 bool cardOk() { return mounted; }
 
@@ -439,7 +490,18 @@ bool reserveFile(const char* path, uint32_t bytes, uint32_t& firstSector, uint32
 
 bool readSector(uint32_t sector, uint8_t* dst) { return mounted && card.card()->readSector(sector, dst); }
 
-bool writeSector(uint32_t sector, const uint8_t* src) { return mounted && card.card()->writeSector(sector, src); }
+// With DEDICATED_SPI, SdFat leaves a multi-block write open after each
+// sector, ready for the next. The power log's sectors are written one at a
+// time while the board may reset at any moment (power returning, or dying),
+// so close it every time: a card reset mid-write ignores CMD0 until its
+// power is cut.
+bool writeSector(uint32_t sector, const uint8_t* src) {
+    return mounted && card.card()->writeSector(sector, src) && card.card()->syncDevice();
+}
+
+void finishTransfers() {
+    if (mounted) card.card()->syncDevice();
+}
 
 uint32_t cardSectors() { return mounted ? static_cast<uint32_t>(card.card()->sectorCount()) : 0; }
 
