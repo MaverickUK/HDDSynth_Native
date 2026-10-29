@@ -1,0 +1,32 @@
+# The companion app's tests (protocol, activity detection, port matching): no
+# GUI, so PySide6 isn't installed. On macOS and Windows as well as Linux,
+# because psutil and pyserial behave differently on each. Kept apart from the
+# firmware workflow so it can move with companion/ to its own repo.
+name: Companion app
+
+on:
+  push:
+    branches: [main]
+    paths: ['companion/**', '.github/workflows/companion.yml']
+  pull_request:
+    paths: ['companion/**', '.github/workflows/companion.yml']
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.9', '3.13']
+    defaults:
+      run:
+        working-directory: companion
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install pytest pyserial psutil platformdirs
+      - run: python -m pytest -q

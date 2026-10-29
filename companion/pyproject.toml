@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hddsynth-companion"
+dynamic = ["version"]
+description = "Plays your computer's disk activity on an HDD Synth over USB, from the tray or menu bar."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "GPL-3.0-or-later" }
+dependencies = [
+    "PySide6-Essentials>=6.5",
+    "pyserial>=3.5",
+    "psutil>=5.9",
+    "platformdirs>=3.0",
+    "pyobjc-framework-Cocoa>=9.0; sys_platform == 'darwin'",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.gui-scripts]
+hddsynth-companion = "hddsynth_companion.app:main"
+
+[project.urls]
+Homepage = "https://github.com/MaverickUK/HDDSynth_Native/tree/main/companion"
+
+[tool.hatch.version]
+path = "src/hddsynth_companion/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hddsynth_companion"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
