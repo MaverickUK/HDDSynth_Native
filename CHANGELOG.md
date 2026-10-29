@@ -6,6 +6,17 @@ follow [Semantic Versioning](https://semver.org). Linked versions have a
 release with its UF2 on the
 [releases page](https://github.com/MaverickUK/HDDSynth_Native/releases).
 
+## [0.19.0] - 2026-10-29
+
+### Added
+- **USB companion app support:** the [HDD Synth Companion](companion/README.md)
+  (a tray app for macOS and Windows, in `companion/`) sends the computer's
+  own disk activity over USB, so the board needs no HDD LED wiring, and can
+  choose the pack and set the volume and balance. The protocol is `$`
+  sentences on the USB serial console, in the HDDSynthPro link's format
+  (described in the README); the single-key console commands are
+  unchanged. The app's activity adds to the activity input.
+
 ## [0.18.1] - 2026-10-28
 
 ### Fixed
@@ -209,6 +220,7 @@ v0.13.0.)
 ### Fixed
 - Recovery from SD card removal without blocking or rebooting.
 
+[0.19.0]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.19.0
 [0.18.1]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.18.1
 [0.18.0]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.18.0
 [0.17.1]: https://github.com/MaverickUK/HDDSynth_Native/releases/tag/v0.17.1

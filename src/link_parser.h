@@ -6,12 +6,15 @@
 // busy 0/1, class I/S/R (idle, sequential, random), op R/W/- (read, write,
 // none; parsed but not used yet), checksum two hex digits: the XOR of every
 // byte between '$' and '*'. Sent on every change and every 200 ms. The
-// protocol is described in HDDSynthPro's docs/activity-link.md.
+// protocol is described in HDDSynthPro's docs/activity-link.md. The USB
+// companion app sends the same sentence (host_protocol.h).
 // Platform independent (unit tested natively).
 #pragma once
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include "sentence.h"
 
 enum class ActivityClass : uint8_t { Idle, Sequential, Random };
 enum class LinkOp : uint8_t { None, Read, Write };
@@ -27,12 +30,10 @@ struct LinkState {
 // add them at the end). Hex in the checksum may be upper or lower case.
 bool parseLinkSentence(const char* line, size_t len, LinkState& out);
 
-// Assembles lines from a byte stream and parses them. A '$' always starts a
-// new line (as in NMEA), so noise before it is dropped; a line ends at '\n'
-// (an optional '\r' before it is stripped).
+// Assembles lines from a byte stream (see LineAssembler) and parses them.
 class LinkParser {
 public:
-    static constexpr size_t MAX_LINE = 80;  // longer lines are dropped (without the line ending)
+    static constexpr size_t MAX_LINE = SENTENCE_MAX_LINE;  // longer lines are dropped (without the line ending)
 
     // Feed one byte. True when it completes a valid sentence (see state()).
     bool feed(char c);
@@ -41,10 +42,7 @@ public:
     uint32_t rejected() const { return rejected_; }  // complete lines that failed (noise without a '$' isn't counted)
 
 private:
-    char buf_[MAX_LINE + 1];  // room for a '\r'
-    size_t len_ = 0;
-    bool inLine_ = false;   // seen a '$'
-    bool tooLong_ = false;
+    LineAssembler lines_;
     LinkState state_;
     uint32_t valid_ = 0;
     uint32_t rejected_ = 0;

@@ -19,6 +19,7 @@
 #include "console.h"
 #include "controls.h"
 #include "hdd_link.h"
+#include "host_protocol.h"
 #include "io.h"
 #include "level_follower.h"
 #include "oled.h"
@@ -28,8 +29,10 @@
 #include "powerlog.h"
 #include "saved_levels.h"
 #include "sd_streamer.h"
+#include "sentence.h"
 #include "settings.h"
 #include "usb_drive.h"
+#include "usb_host.h"
 #include "version.h"
 
 #ifndef WAIT_FOR_SERIAL_MS
@@ -73,6 +76,8 @@ const char* stateName(State s) {
 State state = State::Boot;
 Settings settings;
 char pack[64] = {0};
+int packNumber = -1;  // the loaded pack's position among the card's packs (for the companion app)
+int packCount = 0;
 PackInfo packInfo;                  // the loaded pack's pack.json (defaults if it has none)
 uint8_t settingsLedColour[3] = {0};  // settings.json's activity colour, for packs without their own
 beeps::Type haltBeep = beeps::Type::NoSdCard;  // the error the red LED repeats in HALTED
@@ -128,7 +133,7 @@ void enterRun();
 void startSpinup();
 void pickDemoColour();
 bool startSpindownVoice();
-void changePack(bool spinUp = false);
+void changePack(bool spinUp = false, int index = -1);
 void enterStandby(bool forced = false);
 void factoryReset();
 bool startJingle();
@@ -301,6 +306,7 @@ void printStats() {
                   power::supercapMillivolts(), power::fltHigh());
     st.maxReadMicros = 0;
     hddlink::printStats();
+    usbhost::printStats();
 }
 
 // ---- stress test -------------------------------------------------------------
@@ -358,16 +364,110 @@ void startStress() {
     sd::stats() = sd::Stats{};
 }
 
+// ---- companion app (USB) -------------------------------------------------------
+// The app's '$' sentences share the USB serial console with the single-key
+// commands below (host_protocol.h has the protocol).
+
+uint8_t toPercent(float v) { return static_cast<uint8_t>(lroundf(v * 100)); }
+
+void sendStatus() {
+    char body[96];
+    snprintf(body, sizeof(body), "HDS,1,%s,%s,%d,%d,%u,%u,%d", FIRMWARE_VERSION, stateName(state), packNumber, packCount,
+             toPercent(settings.volume), toPercent(settings.balance), power::supercapMillivolts());
+    usbhost::send(body);
+}
+
+// One $HDP per pack, with pack.json's NAME where there is one. A few small
+// SD reads: fine while the rings hold ~1 s.
+void sendPackList() {
+    static char json[1024];
+    int count = 0;
+    char folder[64];
+    for (int i = 0; sd::packByIndex(i, folder, sizeof(folder), count) && i < count; ++i) {
+        char p[128];
+        snprintf(p, sizeof(p), "/samples/%s/pack.json", folder);
+        PackInfo info;
+        size_t len = 0;
+        if (sd::readTextFile(p, json, sizeof(json), len)) parsePackJson(json, info);
+        // 32 characters of each keeps the sentence a sensible length.
+        char safeFolder[33], safeName[33];
+        sanitiseName(folder, safeFolder, sizeof(safeFolder));
+        sanitiseName(info.name[0] ? info.name : folder, safeName, sizeof(safeName));
+        char body[112];
+        snprintf(body, sizeof(body), "HDP,1,%d,%d,%s,%s", i, count, safeFolder, safeName);
+        usbhost::send(body);
+    }
+}
+
+void ack(HostCommandType t, const char* reason) {
+    char body[48];
+    snprintf(body, sizeof(body), "HDK,1,%s,%s,%s", hostCommandName(t), reason[0] ? "ERR" : "OK", reason);
+    usbhost::send(body);
+}
+
+void runHostCommand(const HostCommand& cmd) {
+    switch (cmd.type) {
+        case HostCommandType::Status: sendStatus(); break;
+        case HostCommandType::Packs: sendPackList(); break;
+        case HostCommandType::Volume:
+            // As if turned on the encoder: saving and the OLED's volume
+            // screen follow settings.volume.
+            settings.volume = cmd.value / 100.0f;
+            ack(cmd.type, "");
+            break;
+        case HostCommandType::Balance:
+            settings.balance = cmd.value / 100.0f;
+            ack(cmd.type, "");
+            break;
+        case HostCommandType::Pack:
+            if (state != State::Run && state != State::Standby) ack(cmd.type, "busy");
+            else if (settings.demoMode) ack(cmd.type, "demo");
+            else if (static_cast<int>(cmd.value) >= packCount) ack(cmd.type, "range");
+            else {
+                ack(cmd.type, "");  // before the change, which takes a second or so
+                changePack(/*spinUp*/ state == State::Standby, static_cast<int>(cmd.value));
+            }
+            break;
+    }
+}
+
+// While the app is connected, tell it when anything it shows changes (the
+// encoder, the action button, a pack change), at most every 250 ms.
+void pushStatusIfChanged() {
+    static int lastPack = -2;
+    static uint8_t lastVol = 255, lastBal = 255;
+    static State lastState = State::Boot;
+    static uint32_t lastPushMs = 0;
+    if (!usbhost::appActive() || millis() - lastPushMs < 250) return;
+    const uint8_t vol = toPercent(settings.volume), bal = toPercent(settings.balance);
+    if (packNumber == lastPack && vol == lastVol && bal == lastBal && state == lastState) return;
+    lastPack = packNumber;
+    lastVol = vol;
+    lastBal = bal;
+    lastState = state;
+    lastPushMs = millis();
+    sendStatus();
+}
+
 // ---- serial commands ---------------------------------------------------------
 
 void handleSerial() {
+    static LineAssembler lines;  // the companion app's '$' sentences
     while (Serial.available()) {
         const char c = Serial.read();
+        if (c == '$' || lines.inLine()) {
+            HostCommand cmd;
+            if (lines.feed(c) == LineAssembler::Result::Line && usbhost::handleLine(lines.line(), lines.length(), cmd)) {
+                runHostCommand(cmd);
+            }
+            continue;
+        }
         switch (c) {
             case 'h':
                 Console.println("firmware v" FIRMWARE_VERSION);
                 Console.println("h help | s stats | t stress on/off | p simulate power loss | "
                                "a toggle simulated activity | + / - volume | > / < balance | n next pack | k beep test | l power log | d list SD root | m demo mode | o OLED mode | z standby | j replay jingle | r reboot | b bootloader");
+                Console.println("lines starting with $ are the companion app's protocol (see the README)");
                 break;
             case 's': printStats(); break;
             case 't':
@@ -517,6 +617,9 @@ void loadPackInfo() {
 
 bool loadPack() {
     Console.printf("[pack] %s\n", pack);
+    packNumber = sd::packIndex(pack);
+    char first[64];
+    if (!sd::packByIndex(0, first, sizeof(first), packCount)) packCount = 0;
     loadPackInfo();
     if (!checkPackRate()) return false;
     // Nothing is playing at this point (boot, pack change, demo hand-over).
@@ -583,6 +686,15 @@ bool loadNextPack() {
     }
 }
 
+// Unload the current pack and load the one at `index` (the companion app's
+// choice). If it's broken, carry on to the next usable one, as above.
+bool loadPackAt(int index) {
+    unloadPack();
+    int count = 0;
+    if (sd::packByIndex(index, pack, sizeof(pack), count) && index < count && loadPack()) return true;
+    return loadNextPack();
+}
+
 // ---- demo mode -----------------------------------------------------------------
 // DEMO_MODE: each pack spins up, plays idle/access with simulated activity
 // for DEMO_PACK_MS, then plays its spindown, and the next pack takes over
@@ -635,11 +747,12 @@ void nextDemoPack() {
 // Short press of the action button (or serial 'n'): switch to the next pack
 // without rebooting, and remember it (sample_changer.next_pack() plus the
 // reload callback in the CircuitPython firmware). Spinup is not replayed.
-void changePack(bool spinUp) {
+// With `index` (the companion app), switch to that pack instead.
+void changePack(bool spinUp, int index) {
     stopPackVoices();
     beepAndWait(beeps::Type::ChangePack);
     io::ampOff();
-    if (!loadNextPack()) return;
+    if (!(index < 0 ? loadNextPack() : loadPackAt(index))) return;
     PersistedState& saved = persist::state();
     strncpy(saved.desiredPack, pack, sizeof(saved.desiredPack) - 1);
     // The audio is stopped and the amp muted, so pausing core 1 for the flash
@@ -1097,6 +1210,8 @@ void loop() {
             delay(10);
             break;
     }
+
+    pushStatusIfChanged();
 
     if (state == State::Run && static_cast<int32_t>(millis() - nextStatsMs) >= 0) {
         nextStatsMs = millis() + 5000;

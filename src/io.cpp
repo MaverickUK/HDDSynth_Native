@@ -7,6 +7,7 @@
 
 #include "config.h"
 #include "hdd_link.h"
+#include "usb_host.h"
 
 namespace io {
 
@@ -85,7 +86,10 @@ bool activity() {
         }
         return simState;
     }
-    const bool raw = hddlink::present() ? hddlink::state().busy : digitalRead(cfg::PIN_ACTIVITY) == LOW;
+    // The local source: the HDDSynthPro link while present, else the
+    // activity input. The USB companion app's activity adds to it.
+    const bool local = hddlink::present() ? hddlink::state().busy : digitalRead(cfg::PIN_ACTIVITY) == LOW;
+    const bool raw = local || (usbhost::present() && usbhost::state().busy);
     if (raw) {
         lastActiveMs = now;
         return true;
@@ -97,6 +101,7 @@ bool activity() {
 ActivityClass activityClass() {
     if (simulate) return simSequential ? ActivityClass::Sequential : ActivityClass::Random;
     if (hddlink::present()) return hddlink::state().cls;
+    if (usbhost::present()) return usbhost::state().cls;
     return ActivityClass::Random;
 }
 

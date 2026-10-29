@@ -27,11 +27,13 @@
 #include "crc32.h"
 #include "level_follower.h"
 #include "levels_format.h"
+#include "host_protocol.h"
 #include "link_parser.h"
 #include "persist_format.h"
 #include "powerlog_format.h"
 #include "quadrature.h"
 #include "ring_buffer.h"
+#include "sentence.h"
 #include "wav.h"
 
 static int failures = 0;
@@ -1139,6 +1141,107 @@ TEST(link_access_sample_choice) {
     }
 }
 
+// ---- Sentences and the companion app protocol --------------------------------
+
+static HostParse parseCmd(const char* line, HostCommand& c) { return parseHostCommand(line, strlen(line), c); }
+
+TEST(sentence_format_and_checksum) {
+    char buf[64];
+    CHECK_EQ(formatSentence(buf, sizeof(buf), "HDA,1,1,S,R"), 17u);
+    CHECK(strcmp(buf, "$HDA,1,1,S,R*4C\r\n") == 0);
+    CHECK_EQ(formatSentence(buf, sizeof(buf), "HDS,1,0.19.0,RUN,0,8,50,50,4150"), 37u);
+    CHECK(strcmp(buf, "$HDS,1,0.19.0,RUN,0,8,50,50,4150*27\r\n") == 0);
+    CHECK_EQ(formatSentence(buf, 17, "HDA,1,1,S,R"), 0u);  // one byte short of room for the NUL
+    CHECK_EQ(formatSentence(buf, 18, "HDA,1,1,S,R"), 17u);
+    const char* body;
+    size_t n;
+    CHECK(sentenceBody("$HDA,1,0,I,-*28", 15, body, n));
+    CHECK_EQ(n, 11u);
+    CHECK(!sentenceBody("$HDA,1,0,I,-*27", 15, body, n));
+}
+
+TEST(sentence_fields) {
+    Field f[3];
+    const char* b = "HDC,1,VOL,55";
+    CHECK_EQ(splitFields(b, strlen(b), f, 3), 4u);  // counted past `max`
+    CHECK(f[0].is("HDC") && f[1].is("1") && f[2].is("VOL"));
+    CHECK(!f[2].is("VO") && !f[2].is("VOLUME"));
+    Field e[4];
+    CHECK_EQ(splitFields("A,,B,", 5, e, 4), 4u);  // empty fields count
+    CHECK_EQ(e[1].n, 0u);
+    CHECK_EQ(e[3].n, 0u);
+    uint32_t v = 0;
+    Field num{"0042", 4};
+    CHECK(num.toUint(v) && v == 42);
+    Field bad{"4x", 2}, empty{"", 0}, neg{"-1", 2};
+    CHECK(!bad.toUint(v) && !empty.toUint(v) && !neg.toUint(v));
+}
+
+TEST(sentence_line_assembler) {
+    LineAssembler a;
+    std::vector<std::string> lines;
+    int dropped = 0;
+    auto feed = [&](const char* t) {
+        for (const char* c = t; *c; ++c) {
+            const LineAssembler::Result r = a.feed(*c);
+            if (r == LineAssembler::Result::Line) lines.push_back(a.line());
+            if (r == LineAssembler::Result::Dropped) ++dropped;
+        }
+    };
+    // A '-' inside a sentence is part of the line: the serial console must
+    // not read it as "volume down" (handleSerial checks inLine()).
+    feed("h$HDA,1,0,I,-*28\r\n");
+    CHECK_EQ(lines.size(), 1u);
+    CHECK(lines[0] == "$HDA,1,0,I,-*28");
+    CHECK(!a.inLine());
+    feed("$HDQ,1,");
+    CHECK(a.inLine());
+    feed("STATUS*78\n");
+    CHECK(lines.size() == 2 && lines[1] == "$HDQ,1,STATUS*78");
+    feed("$HDQ,1$HDQ,1,PACKS*26\n");  // cut off by a '$'
+    CHECK_EQ(dropped, 1);
+    CHECK(lines.size() == 3 && lines[2] == "$HDQ,1,PACKS*26");
+    std::string longLine(81, 'x');
+    feed(("$" + longLine + "\n").c_str());
+    CHECK_EQ(dropped, 2);
+    CHECK_EQ(lines.size(), 3u);
+}
+
+TEST(host_commands) {
+    HostCommand c;
+    CHECK(parseCmd("$HDQ,1,STATUS*78", c) == HostParse::Command && c.type == HostCommandType::Status);
+    CHECK(parseCmd("$HDQ,1,PACKS*26", c) == HostParse::Command && c.type == HostCommandType::Packs);
+    CHECK(parseCmd("$HDC,1,VOL,55*07", c) == HostParse::Command && c.type == HostCommandType::Volume && c.value == 55);
+    CHECK(parseCmd("$HDC,1,BAL,0*2D", c) == HostParse::Command && c.type == HostCommandType::Balance && c.value == 0);
+    CHECK(parseCmd("$HDC,1,BAL,100*2C", c) == HostParse::Command && c.value == 100);
+    CHECK(parseCmd("$HDC,1,PACK,3*78", c) == HostParse::Command && c.type == HostCommandType::Pack && c.value == 3);
+    CHECK(strcmp(hostCommandName(HostCommandType::Pack), "PACK") == 0);
+}
+
+TEST(host_commands_rejected) {
+    HostCommand c;
+    CHECK(parseCmd("$HDA,1,0,I,-*28", c) == HostParse::NotCommand);  // activity goes to the link parser
+    CHECK(parseCmd("$HDQ,1,STATUS*79", c) == HostParse::Invalid);   // checksum
+    CHECK(parseCmd("$HDC,1,VOL,101*37", c) == HostParse::Invalid);  // over 100%
+    CHECK(parseCmd("$HDC,1,VOL,*07", c) == HostParse::Invalid);     // no value
+    CHECK(parseCmd("$HDC,1,VOL,5x*4A", c) == HostParse::Invalid);
+    CHECK(parseCmd("$HDQ,1,FOO*2A", c) == HostParse::Invalid);      // unknown query
+    CHECK(parseCmd("$HDQ,2,STATUS*7B", c) == HostParse::Invalid);   // version 2
+    CHECK(parseCmd("$HDC,1,LED,3*2C", c) == HostParse::Invalid);    // unknown command
+    CHECK(parseCmd("$HDQ,1*40", c) == HostParse::Invalid);          // too few fields
+    CHECK(parseCmd("HDQ,1,STATUS*78", c) == HostParse::Invalid);    // no '$'
+}
+
+TEST(host_sanitise_name) {
+    char out[16];
+    sanitiseName("IBM, 36LZX*$", out, sizeof(out));
+    CHECK(strcmp(out, "IBM_ 36LZX__") == 0);
+    sanitiseName("tab\there", out, sizeof(out));
+    CHECK(strcmp(out, "tab_here") == 0);
+    sanitiseName("a much longer name than fits", out, 8);
+    CHECK(strcmp(out, "a much ") == 0);  // truncated, still terminated
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -1204,6 +1307,12 @@ int main(int argc, char** argv) {
     RUN(link_parser_drops_long_lines);
     RUN(link_watch_timeout);
     RUN(link_access_sample_choice);
+    RUN(sentence_format_and_checksum);
+    RUN(sentence_fields);
+    RUN(sentence_line_assembler);
+    RUN(host_commands);
+    RUN(host_commands_rejected);
+    RUN(host_sanitise_name);
     std::printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

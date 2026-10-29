@@ -2,33 +2,15 @@
 
 #include <string.h>
 
-namespace {
-
-int hexDigit(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    return -1;
-}
-
-} // namespace
-
 bool parseLinkSentence(const char* line, size_t len, LinkState& out) {
-    // "$HDA,1,b,c,o*hh" is the shortest valid sentence.
-    if (len < 15 || line[0] != '$') return false;
-    const char* star = static_cast<const char*>(memchr(line, '*', len));
-    if (!star || line + len - star != 3) return false;  // exactly two digits after '*'
-    const int hi = hexDigit(star[1]), lo = hexDigit(star[2]);
-    if (hi < 0 || lo < 0) return false;
-    uint8_t sum = 0;
-    for (const char* p = line + 1; p < star; ++p) sum ^= static_cast<uint8_t>(*p);
-    if (sum != (hi << 4 | lo)) return false;
+    const char* body;
+    size_t bodyLen;
+    if (!sentenceBody(line, len, body, bodyLen)) return false;
 
-    // Fields between '$' and '*': HDA, version, busy, class, op[, later fields].
-    const char* body = line + 1;
-    const size_t bodyLen = static_cast<size_t>(star - body);
+    // Fields: HDA, version, busy, class, op[, later fields]. Each of the
+    // first five after the name is one character.
     if (bodyLen < 11 || memcmp(body, "HDA,1,", 6) != 0) return false;
-    if (bodyLen > 11 && body[11] != ',') return false;  // each field is one character
+    if (bodyLen > 11 && body[11] != ',') return false;
     if (body[7] != ',' || body[9] != ',') return false;
 
     LinkState s;
@@ -54,29 +36,21 @@ bool parseLinkSentence(const char* line, size_t len, LinkState& out) {
 }
 
 bool LinkParser::feed(char c) {
-    if (c == '$') {  // a new sentence, whatever came before
-        if (inLine_) ++rejected_;  // the previous one never ended
-        inLine_ = true;
-        tooLong_ = false;
-        buf_[0] = c;
-        len_ = 1;
-        return false;
+    switch (lines_.feed(c)) {
+        case LineAssembler::Result::None:
+            return false;
+        case LineAssembler::Result::Dropped:
+            ++rejected_;
+            return false;
+        case LineAssembler::Result::Line:
+            break;
     }
-    if (!inLine_) return false;  // noise between sentences
-    if (c == '\n') {
-        inLine_ = false;
-        size_t n = len_;
-        if (n && buf_[n - 1] == '\r') --n;
-        LinkState s;
-        if (!tooLong_ && n <= MAX_LINE && parseLinkSentence(buf_, n, s)) {
-            state_ = s;
-            ++valid_;
-            return true;
-        }
+    LinkState s;
+    if (!parseLinkSentence(lines_.line(), lines_.length(), s)) {
         ++rejected_;
         return false;
     }
-    if (len_ < sizeof(buf_)) buf_[len_++] = c;
-    else tooLong_ = true;
-    return false;
+    state_ = s;
+    ++valid_;
+    return true;
 }

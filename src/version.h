@@ -6,4 +6,4 @@
 // While MAJOR is 0 (proof of concept), anything may change between minors.
 #pragma once
 
-#define FIRMWARE_VERSION "0.18.1"
+#define FIRMWARE_VERSION "0.19.0"

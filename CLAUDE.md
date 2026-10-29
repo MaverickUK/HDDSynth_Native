@@ -240,6 +240,26 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   streams with no underruns, the LED and sample switch); not yet with real link
   lines or HDDSynthPro.
 
+- USB companion app (`companion/`, Python + PySide6, its own version; v0.19.0
+  firmware): `$` lines on the USB console go to `usb_host.*` (assembled by
+  `LineAssembler` in `handleSerial()`, so `-` inside a sentence isn't
+  "volume down"). `$HDA` is activity (ORed with the local input in
+  `io::activity()`), `$HDQ`/`$HDC` are parsed by `host_protocol.*` (pure,
+  host-tested) and run by `runHostCommand()` in main.cpp; replies via
+  `usbhost::send()` straight to Serial (not Console), waiting up to 50 ms
+  for buffer room. `sentence.*` holds the shared NMEA helpers (also used by
+  `link_parser`). Pack by index: `changePack(spinUp, index)` →
+  `loadPackAt()`. `$HDS` is pushed on change while the app is active.
+  The app's tests (`companion/tests`, pytest) share known answers with the
+  firmware's; CI: `.github/workflows/companion.yml`. Verified 2026-10-29 on
+  macOS against the board (protocol script: status, pack list, VOL/BAL
+  saved, PACK switch and range error, bad checksum ignored, `-` in a
+  sentence harmless; the app connects, switches packs, follows the encoder).
+  Not yet run on Windows. The app's supercap thresholds
+  (`companion/.../supercap.py`) are estimates: measure a real cut.
+  macOS gotcha: QFormLayout keeps fields at their size hint, so custom
+  widgets need a sizeHint() (the supercap bar was 0 px wide).
+
 **Still to port from the Python firmware:**
 - [x] Rotary encoder: volume / balance, with button toggling the mode
       (`controls.*`, decoding in `quadrature.h`).
