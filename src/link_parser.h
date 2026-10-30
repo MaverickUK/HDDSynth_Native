@@ -8,6 +8,15 @@
 // byte between '$' and '*'. Sent on every change and every 200 ms. The
 // protocol is described in HDDSynthPro's docs/activity-link.md. The USB
 // companion app sends the same sentence (host_protocol.h).
+//
+// Version 2 adds the head's target, for a modelled drive (drive.json):
+//
+//   $HDE,2,<pos>,<op>,<sectors>*<checksum>\r\n
+//
+// pos 0-65535: the command's LBA as a fraction of the disk (LBA x 65535 /
+// total sectors); op R/W/-; sectors, the command's length. Sent at most
+// every 2 ms, always the latest command (HDDSynthPro's
+// docs/hddsynth-head-position-brief.md).
 // Platform independent (unit tested natively).
 #pragma once
 
@@ -25,6 +34,16 @@ struct LinkState {
     LinkOp op = LinkOp::None;
 };
 
+// A command's target ($HDE).
+struct HeadTarget {
+    uint16_t pos = 0;      // LBA / total sectors, x 65535
+    LinkOp op = LinkOp::None;
+    uint32_t sectors = 0;
+};
+
+// Parse an $HDE line (version 2 or later; later fields ignored).
+bool parseHeadSentence(const char* line, size_t len, HeadTarget& out);
+
 // Parse one line, without its line ending. False if it isn't a valid
 // version 1 $HDA sentence (fields after <op> are ignored: later versions
 // add them at the end). Hex in the checksum may be upper or lower case.
@@ -35,15 +54,19 @@ class LinkParser {
 public:
     static constexpr size_t MAX_LINE = SENTENCE_MAX_LINE;  // longer lines are dropped (without the line ending)
 
-    // Feed one byte. True when it completes a valid sentence (see state()).
-    bool feed(char c);
+    enum class Got : uint8_t { Nothing, Activity, Head };
+    // Feed one byte. Activity or Head when it completes a valid $HDA (see
+    // state()) or $HDE (see head()).
+    Got feed(char c);
     const LinkState& state() const { return state_; }
+    const HeadTarget& head() const { return head_; }
     uint32_t valid() const { return valid_; }
     uint32_t rejected() const { return rejected_; }  // complete lines that failed (noise without a '$' isn't counted)
 
 private:
     LineAssembler lines_;
     LinkState state_;
+    HeadTarget head_;
     uint32_t valid_ = 0;
     uint32_t rejected_ = 0;
 };
@@ -63,6 +86,20 @@ public:
 private:
     uint32_t lastMs_ = 0;
     bool ever_ = false;
+};
+
+// The latest head target from a source (the link or the USB app), and
+// whether targets are still arriving (LinkWatch's timeout). `seq` counts
+// targets, so a reader can tell a new one from the last.
+struct HeadFeed {
+    LinkWatch watch;
+    HeadTarget latest;
+    uint32_t seq = 0;
+    void got(const HeadTarget& h, uint32_t nowMs) {
+        latest = h;
+        ++seq;
+        watch.seen(nowMs);
+    }
 };
 
 // Which looping sample is at the access level while the drive is active:

@@ -17,6 +17,7 @@ bool handleLine(const char* line, size_t len, HostCommand& cmd);
 
 bool present();     // an $HDA sentence within the last second
 LinkState state();  // the latest $HDA (meaningful while present())
+const HeadFeed& heads();  // $HDE over USB: for testing modelled drives (the app can't see LBAs)
 bool appActive();   // any valid sentence within the last 3 s (worth sending status to)
 
 // Send a sentence to the app: `body` is everything between '$' and '*'.

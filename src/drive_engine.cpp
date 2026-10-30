@@ -1,5 +1,7 @@
 #include "drive_engine.h"
 
+#include "drive_timing.h"
+
 #include <math.h>
 #include <new>
 
@@ -19,7 +21,6 @@ namespace {
 
 constexpr float TAU = 6.2831853f;
 constexpr float SETTLE_WIN = 0.003f;  // within this of the target the seek hands over to track following
-constexpr float RI = 0.45f;           // inner/outer radius of the data zone
 constexpr float ARM[8] = {1, 1.62f, 2.31f, 2.97f, 3.83f, 4.7f, 6.1f, 7.9f};
 constexpr float CASE[4] = {1, 1.47f, 2.09f, 2.83f};
 
@@ -95,6 +96,7 @@ bool DriveEngine::setBalance(float balance, bool idleSound) {
 }
 bool DriveEngine::seekTo(float x) { return post({Cmd::SeekTo, 0, 0, clampf(x, 0, 1)}); }
 bool DriveEngine::setFlood(bool on) { return post({Cmd::Flood, uint8_t(on), 0, 0}); }
+bool DriveEngine::seekToLba(float f) { return post({Cmd::SeekLba, 0, 0, clampf(f, 0, 1)}); }
 
 bool DriveEngine::updateParams(const DriveParams& p) {
     if (paramsPending_.load(std::memory_order_acquire)) return false;
@@ -153,6 +155,20 @@ void DriveEngine::applyEvent(const Event& e) {
         case Cmd::Flood:
             flood_ = e.a != 0;
             break;
+        case Cmd::SeekLba: {
+            if (state_ != DriveState::Ready) break;
+            stepCount_ = 0;
+            haveJob_ = false;
+            jobCount_ = 0;
+            workload_ = DriveWorkload::Idle;
+            busyHold_ = 0.05f;
+            const float x = mapX(e.value);
+            const int cyl = cylinders();
+            const float cur = stepper() ? static_cast<float>(tTrack_) / (cyl - 1) : xt_;
+            if (fabsf(x - cur) * (cyl - 1) < 0.5f) break;  // the same track: the head doesn't move
+            seekHead(x, p_.tick);  // the tick applies only within a few tracks (see seekHead)
+            break;
+        }
     }
 }
 
@@ -268,14 +284,8 @@ float DriveEngine::parkX() const {
     return x_;
 }
 
-// Zoned recording: constant areal density, so LBA fraction f covers the
-// area outside radius r. Without it, tracks are evenly filled.
-float DriveEngine::mapX(float f) const {
-    f = clampf(f, 0, 1);
-    if (!p_.zoned) return f;
-    const float r = sqrtFast(1 - f * (1 - RI * RI));
-    return (1 - r) / (1 - RI);
-}
+// Zoned recording (drive_timing.h, shared with HDDSynthPro's timing).
+float DriveEngine::mapX(float f) const { return lbaToStroke(f, p_.zoned); }
 
 DRIVE_RAM void DriveEngine::seekHead(float xs, float tick) {
     if (stepper()) {
@@ -522,6 +532,10 @@ DRIVE_RAM void DriveEngine::control() {
     }
 
     busy_ = false;
+    if (busyHold_ > 0) {
+        busyHold_ -= ctrlDt_;
+        busy_ = true;
+    }
     if (state_ == DriveState::Ready && !stepCount_) {
         if (workload_ == DriveWorkload::Idle || (haveJob_ && job_.kind == JobKind::Pause)) {
             recalTimer_ += ctrlDt_;

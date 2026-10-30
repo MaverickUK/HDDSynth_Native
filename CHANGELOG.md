@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org). Linked versions have a
 release with its UF2 on the
 [releases page](https://github.com/MaverickUK/HDDSynth_Native/releases).
 
+## [0.21.0] - 2026-10-30
+
+### Added
+- **Head positions for modelled drives** (HDDSynthPro link, protocol
+  version 2): `$HDE,2,<pos>,<op>,<sectors>` gives each command's target, and
+  while they arrive the modelled head goes where the computer is really
+  reading and writing, in place of the virtual workload. They're also
+  accepted over USB, for testing.
+- **`$HDM`, the modelled drive's timing,** sent back to HDDSynthPro on the
+  link's other direction (J6 pin 4, unused until now) every 2 s and on each pack change, and on
+  request over USB (`$HDQ,1,MODEL`). HDDSynthPro's coming `seek_timing`
+  setting uses it to hold each command for as long as that drive would take.
+- `src/drive_timing.*`: the seek, rotation and transfer times, host-tested
+  against the drive engine, for HDDSynthPro to copy.
+
 ## [0.20.0] - 2026-10-30
 
 ### Added

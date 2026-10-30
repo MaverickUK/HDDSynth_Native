@@ -306,7 +306,7 @@ HDD Synth listens for it on header **J6** (instead of an OLED):
 | 1 | 3.3 V | nothing: each board has its own supply |
 | 2 | GND | HDDSynthPro GND |
 | 3 | GP25, UART1 RX | HDDSynthPro's link TX, through a 1 kΩ resistor at its end |
-| 4 | GP24, UART1 TX | nothing (reserved) |
+| 4 | GP24, UART1 TX | HDDSynthPro's link RX (on its PCB, J3 pin 4: a straight 4-way cable connects it), for its `seek_timing = synth` |
 
 It's a one-way UART at 115200 baud, 8N1, carrying lines like
 `$HDA,1,1,S,R*4C` (busy, sequential, reading); the protocol is in
@@ -325,6 +325,20 @@ loop). After a second without a valid line the link counts as lost and the
 activity input takes over again; the log says `[link] up` and `[link] lost`.
 The `s` stats include the link's state and counts of valid and rejected
 lines.
+
+**Modelled drives (protocol version 2, v0.21.0):** with a `drive.json`
+pack, HDDSynthPro can also send each command's target,
+`$HDE,2,<pos>,<op>,<sectors>` (`pos` is the LBA as a fraction of the disk,
+0-65535). While they arrive, the modelled head goes where the computer is
+really reading and writing, instead of the virtual workload: another sector
+on the same track doesn't move it, a few tracks away it ticks, further it
+seeks. Back the other way, on pin 4 (the UART's other direction), the synth sends HDDSynthPro the
+playing drive's timing every 2 s and on each pack change,
+`$HDM,2,<V|S>,<rpm>,...` (or `$HDM,2,-` for a recorded pack), so
+HDDSynthPro's authentic timing can hold each command for as long as that
+drive would take (`src/drive_timing.h`; HDDSynthPro's
+`docs/hddsynth-head-position-brief.md`). The `s` stats show `heads=` (how
+many targets have arrived) and `sent=` (the `$HDM` replies).
 
 To try it without an HDDSynthPro: with `SIMULATION_MODE` on, one simulated
 burst in three becomes a longer sequential spell. Or connect a 3.3 V
@@ -363,12 +377,15 @@ every byte between `$` and `*`.
 | app → board | `$HDA,1,<busy>,<class>,<op>` | Disk activity: busy `0`/`1`; class `I` idle, `S` sequential, `R` random; op `R`, `W` or `-`. Sent on every change and every 200 ms; after 1 s without one the board stops using it. |
 | app → board | `$HDQ,1,STATUS` | Ask for `$HDS`. |
 | app → board | `$HDQ,1,PACKS` | Ask for the pack list (`$HDP` for each pack). |
+| app → board | `$HDQ,1,MODEL` | Ask for `$HDM`: the modelled drive's timing, as sent to HDDSynthPro (see the HDDSynthPro link). |
+| app → board | `$HDE,2,<pos>,<op>,<sectors>` | A command's target, as from HDDSynthPro: for testing modelled drives (the app itself can't see LBAs). |
 | app → board | `$HDC,1,VOL,<0-100>` | Set the volume (saved like an encoder change). |
 | app → board | `$HDC,1,BAL,<0-100>` | Set the balance. |
 | app → board | `$HDC,1,PACK,<index>` | Switch to that pack (as the action button does, remembered). Only in RUN or STANDBY, and not in demo mode. |
 | board → app | `$HDS,1,<firmware>,<state>,<packIndex>,<packCount>,<volume>,<balance>,<supercapMv>` | Status. Also sent unprompted when the pack, volume, balance or state changes (at most every 250 ms) while the app is connected. |
 | board → app | `$HDP,1,<index>,<count>,<folder>,<name>` | One pack: its folder and its pack.json `NAME` (or the folder), each up to 32 characters, with `,`, `*` and `$` replaced by `_`. |
 | board → app | `$HDK,1,<VOL\|BAL\|PACK>,<OK\|ERR>,<reason>` | Reply to a command; reasons are `busy`, `demo` and `range`. |
+| board → app | `$HDM,2,<V\|S>,<rpm>,<cylinders>,<fullStroke ms x10>,<track ms x10>,<settleDamp x100>,<step ms x10>,<stepRamp x100>,<zoned>` | The modelled drive's timing (`$HDM,2,-` for a recorded pack). |
 
 For example `$HDQ,1,STATUS*78` and `$HDC,1,VOL,55*07` can be pasted into a
 serial terminal to try it.

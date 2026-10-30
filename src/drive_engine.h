@@ -57,8 +57,14 @@ public:
     // `idleSound` off, the running sound is silent once Ready (PLAY_IDLE).
     bool setBalance(float balance, bool idleSound);
     // Seek the head to `x` across the stroke (0 = outer edge, 1 = inner)
-    // and hold it there, in place of the workload. For the link's positions.
+    // and hold it there, in place of the workload.
     bool seekTo(float x);
+    // A command's target from HDDSynthPro ($HDE): `f` = LBA / total
+    // sectors, placed on the stroke as the drive's recording zones put it.
+    // On the same track the head stays put; a few tracks away it ticks;
+    // further, it seeks. Each one counts as transferring (servo buzz) for
+    // 50 ms. Replaces the workload, like seekTo().
+    bool seekToLba(float f);
     // A new target every 2 ms whatever the head is doing, like an emulated
     // drive answering from SD (the head merges them).
     bool setFlood(bool on);
@@ -85,7 +91,7 @@ public:
 private:
     struct Svf { float a1 = 0, a2 = 0, a3 = 0, ic1 = 0, ic2 = 0, lp = 0, bp = 0; };
     struct Biquad { float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0; };
-    enum class Cmd : uint8_t { Power, Workload, Balance, SeekTo, Flood };
+    enum class Cmd : uint8_t { Power, Workload, Balance, SeekTo, Flood, SeekLba };
     struct Event { Cmd cmd; uint8_t a; uint8_t b; float value; };
     struct Step { bool hasX; float x, click, caseKick, wait; };
     enum class JobKind : uint8_t { Seek, Seq, Pause };
@@ -189,4 +195,5 @@ private:
     float jobT_ = 0, jobLat_ = 0, retX_ = 0, seqAcc_ = 0, recalTimer_ = 0;
     DriveWorkload workload_ = DriveWorkload::Idle;
     bool flood_ = false, busy_ = false;
+    float busyHold_ = 0;  // seconds the link's last target keeps the drive transferring
 };

@@ -169,7 +169,12 @@ trigger the release workflow.
   source in `mixBlock()`; core 0 sends commands through its SPSC ring and
   `updateParams()`. `drive_pack.*` parses `drive.json`. main.cpp's
   `modelled` flag switches spin-up, run, spindown, standby and demo over to
-  it (`startDrive()`, `spindownPlaying()`).
+  it (`startDrive()`, `spindownPlaying()`). `$HDE` head targets (link or
+  USB) move the head via `followHeadTargets()`; `$HDM` replies go to
+  HDDSynthPro (`serviceModelReply()`). `drive_timing.*` (seek, rotation and
+  transfer times, held to the engine by the host tests) is copied into
+  HDDSynthPro for its `seek_timing`: change the engine's head equations or
+  constants and `seekTimeUs()` together.
 - `console.*`: **print through `Console`, not `Serial`.** It writes to USB
   serial and keeps the last lines for the OLED debug screen. (Reading serial
   commands still uses `Serial`.)
@@ -284,9 +289,10 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   Verified 2026-10-30 on hardware with the four presets (packs
   `MODEL_*` on the test card): ~0.9-1.05 ms per 4 ms block at 32 kHz with
   simulated activity, no underflows, the modelled spindown on a simulated
-  power loss (8.3 s for `voice97`). Next (the plan's phase 3): `$HDE` head
-  positions from HDDSynthPro, live tuning from the companion app
-  (`$HDC,1,SET`), and optional recorded grains (seek, park) per pack.
+  power loss (8.3 s for `voice97`). v0.21.0 added `$HDE` head positions and
+  `$HDM` (HDDSynthPro side briefed in its docs/hddsynth-head-position-brief.md).
+  Still to do: live tuning from the companion app (`$HDC,1,SET`), and
+  optional recorded grains (seek, park) per pack.
 
 **Still to port from the Python firmware:**
 - [x] Rotary encoder: volume / balance, with button toggling the mode

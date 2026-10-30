@@ -12,6 +12,7 @@ constexpr uint32_t APP_ACTIVE_MS = 3000;
 
 LinkWatch activity;
 LinkState latest;
+HeadFeed headFeed;
 uint32_t lastSentenceMs = 0;
 bool everSpoke = false;
 bool wasPresent = false;
@@ -36,6 +37,12 @@ bool handleLine(const char* line, size_t len, HostCommand& cmd) {
             return false;
         case HostParse::NotCommand:
             break;
+    }
+    HeadTarget h;
+    if (parseHeadSentence(line, len, h)) {
+        noteValid();
+        headFeed.got(h, millis());
+        return false;
     }
     LinkState s;
     if (!parseLinkSentence(line, len, s)) {
@@ -62,6 +69,7 @@ bool present() {
 }
 
 LinkState state() { return latest; }
+const HeadFeed& heads() { return headFeed; }
 
 bool appActive() { return everSpoke && millis() - lastSentenceMs < APP_ACTIVE_MS; }
 

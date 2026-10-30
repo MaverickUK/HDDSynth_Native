@@ -21,6 +21,7 @@
 #include "controls.h"
 #include "drive_engine.h"
 #include "drive_pack.h"
+#include "drive_timing.h"
 #include "drive_workload.h"
 #include "hdd_link.h"
 #include "host_protocol.h"
@@ -111,6 +112,9 @@ DrivePack drivePack;
 WorkloadChooser workloadChooser;
 DriveWorkload driveWorkload = DriveWorkload::Idle;
 float driveBalance = -1;     // what the engine was last told (-1: nothing yet)
+uint32_t headSeqSeen = 0;    // the last $HDE target given to the engine
+bool headDriven = false;     // $HDE targets are moving the head (not the virtual workload)
+uint32_t nextModelMs = 0;    // when to tell HDDSynthPro the model again ($HDM)
 bool driveIdleSound = true;
 
 int16_t* spindownRam = nullptr;
@@ -216,6 +220,52 @@ void startDrive(bool atSpeed) {
     driveWorkload = DriveWorkload::Idle;
     driveEngine->setWorkload(driveWorkload);
     driveEngine->power(true, atSpeed);
+}
+
+// $HDM: the playing pack's seek model (or "none"), for HDDSynthPro's
+// authentic timing. The body is everything between '$' and '*'.
+void modelBody(char* out, size_t len) {
+    if (modelled) {
+        const SeekModel m = seekModelOf(drivePack.params);
+        formatModelBody(&m, out, len);
+    } else {
+        formatModelBody(nullptr, out, len);
+    }
+}
+
+// Tell HDDSynthPro the model every 2 s (it may have restarted), and at once
+// after a pack change (loadPack() resets the timer).
+void serviceModelReply() {
+    if (!hddlink::enabled() || static_cast<int32_t>(millis() - nextModelMs) < 0) return;
+    nextModelMs = millis() + 2000;
+    char body[64];
+    modelBody(body, sizeof(body));
+    hddlink::send(body);
+}
+
+// The head follows HDDSynthPro's targets ($HDE) while they arrive (or the
+// USB console's, for testing). Returns false when there are none, so the
+// virtual workload runs instead.
+bool followHeadTargets() {
+    const uint32_t now = millis();
+    const HeadFeed* feed = nullptr;
+    if (hddlink::heads().watch.present(now)) feed = &hddlink::heads();
+    else if (usbhost::heads().watch.present(now)) feed = &usbhost::heads();
+    if (!feed) {
+        if (headDriven) {
+            headDriven = false;
+            driveWorkload = DriveWorkload::Idle;  // where seekToLba() left the engine; the chooser takes over
+            Console.println("[drive] head targets stopped: virtual workload");
+        }
+        return false;
+    }
+    if (!headDriven) {
+        headDriven = true;
+        headSeqSeen = feed->seq - 1;
+        Console.println("[drive] following the head targets ($HDE)");
+    }
+    if (feed->seq != headSeqSeen && driveEngine->seekToLba(feed->latest.pos / 65535.0f)) headSeqSeen = feed->seq;
+    return true;
 }
 
 // Is a spindown still playing: the spindown voice, or the drive coasting down?
@@ -481,6 +531,12 @@ void runHostCommand(const HostCommand& cmd) {
             settings.balance = cmd.value / 100.0f;
             ack(cmd.type, "");
             break;
+        case HostCommandType::Model: {
+            char body[64];
+            modelBody(body, sizeof(body));
+            usbhost::send(body);
+            break;
+        }
         case HostCommandType::Pack:
             if (state != State::Run && state != State::Standby) ack(cmd.type, "busy");
             else if (settings.demoMode) ack(cmd.type, "demo");
@@ -721,6 +777,7 @@ bool loadDrivePack(bool& ok) {
 
 bool loadPack() {
     Console.printf("[pack] %s\n", pack);
+    nextModelMs = millis();  // tell HDDSynthPro the new model straight away
     packNumber = sd::packIndex(pack);
     char first[64];
     if (!sd::packByIndex(0, first, sizeof(first), packCount)) packCount = 0;
@@ -1189,9 +1246,10 @@ void runStep() {
         }
     }
     if (modelled) {
-        // The activity picks the drive's virtual workload; the engine makes the seeks.
+        // HDDSynthPro's head targets move the head; without them, the
+        // activity picks the drive's virtual workload and the engine makes the seeks.
         const DriveWorkload w = workloadChooser.choose(active, io::activityClass(), io::activityClassKnown(), millis());
-        if (w != driveWorkload && driveEngine->setWorkload(w)) driveWorkload = w;
+        if (!followHeadTargets() && w != driveWorkload && driveEngine->setWorkload(w)) driveWorkload = w;
         audio::setLevel(VOICE_DRIVE, driveLevel());
         syncDriveBalance();
         return;
@@ -1221,6 +1279,7 @@ void loop() {
     checkCore1();
     handleSerial();
     hddlink::service();
+    serviceModelReply();
 
     switch (state) {
         case State::Boot:

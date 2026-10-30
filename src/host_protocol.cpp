@@ -16,6 +16,7 @@ HostParse parseHostCommand(const char* line, size_t len, HostCommand& out) {
     if (query) {
         if (f[2].is("STATUS")) c.type = HostCommandType::Status;
         else if (f[2].is("PACKS")) c.type = HostCommandType::Packs;
+        else if (f[2].is("MODEL")) c.type = HostCommandType::Model;
         else return HostParse::Invalid;
     } else {
         if (n < 4 || !f[3].toUint(c.value)) return HostParse::Invalid;
@@ -36,6 +37,7 @@ const char* hostCommandName(HostCommandType t) {
         case HostCommandType::Volume: return "VOL";
         case HostCommandType::Balance: return "BAL";
         case HostCommandType::Pack: return "PACK";
+        case HostCommandType::Model: return "MODEL";
     }
     return "?";
 }

@@ -20,6 +20,7 @@
 #include "mixer.h"
 #include "drive_engine.h"
 #include "drive_params.h"
+#include "drive_timing.h"
 #include "oled_model.h"
 #include "oled_screens.h"
 #include "beep.h"
@@ -1015,7 +1016,7 @@ static bool parseLine(const char* line, LinkState& out) { return parseLinkSenten
 // Feed a string; returns how many valid sentences it completed.
 static int feedAll(LinkParser& p, const char* text) {
     int n = 0;
-    for (const char* c = text; *c; ++c) n += p.feed(*c);
+    for (const char* c = text; *c; ++c) n += p.feed(*c) != LinkParser::Got::Nothing;
     return n;
 }
 
@@ -1479,6 +1480,169 @@ TEST(drive_two_threads_commands_while_rendering) {
     CHECK(finite);
 }
 
+// A whole sentence line ("$" + body + "*hh", no line ending) for the parsers.
+static std::string sentenceLine(const char* body) {
+    char buf[128];
+    const size_t n = formatSentence(buf, sizeof(buf), body);
+    return std::string(buf, n >= 2 ? n - 2 : 0);  // without "\r\n"
+}
+
+TEST(link_head_sentences) {
+    HeadTarget h;
+    std::string l = sentenceLine("HDE,2,32768,R,8");
+    CHECK(parseHeadSentence(l.data(), l.size(), h));
+    CHECK_EQ(int(h.pos), 32768);
+    CHECK(h.op == LinkOp::Read);
+    CHECK_EQ(int(h.sectors), 8);
+    l = sentenceLine("HDE,3,0,W,256,extra");  // a later version: extra fields ignored
+    CHECK(parseHeadSentence(l.data(), l.size(), h));
+    CHECK(h.op == LinkOp::Write);
+    for (const char* bad : {"HDE,1,100,R,8", "HDE,2,65536,R,8", "HDE,2,100,X,8", "HDE,2,100,R", "HDE,2,-1,R,8"}) {
+        l = sentenceLine(bad);
+        CHECK(!parseHeadSentence(l.data(), l.size(), h));
+    }
+    l = sentenceLine("HDE,2,100,R,8");
+    l[l.size() - 1] = l[l.size() - 1] == '0' ? '1' : '0';  // a bad checksum
+    CHECK(!parseHeadSentence(l.data(), l.size(), h));
+
+    // The link's parser yields both kinds, and the feed tracks the latest.
+    LinkParser p;
+    std::string stream = sentenceLine("HDA,1,1,R,R") + "\r\n" + sentenceLine("HDE,2,1000,R,1") + "\r\n";
+    int act = 0, heads = 0;
+    HeadFeed feed;
+    for (char c : stream) {
+        const LinkParser::Got g = p.feed(c);
+        if (g == LinkParser::Got::Activity) ++act;
+        if (g == LinkParser::Got::Head) { ++heads; feed.got(p.head(), 500); }
+    }
+    CHECK_EQ(act, 1);
+    CHECK_EQ(heads, 1);
+    CHECK_EQ(int(feed.latest.pos), 1000);
+    CHECK_EQ(int(feed.seq), 1);
+    CHECK(feed.watch.present(1499));
+    CHECK(!feed.watch.present(1500));
+}
+
+TEST(host_model_query) {
+    HostCommand c;
+    const std::string l = sentenceLine("HDQ,1,MODEL");
+    CHECK(parseHostCommand(l.data(), l.size(), c) == HostParse::Command);
+    CHECK(c.type == HostCommandType::Model);
+    // $HDE is a valid sentence but not a command: it goes to the head feed.
+    const std::string e = sentenceLine("HDE,2,1,R,1");
+    CHECK(parseHostCommand(e.data(), e.size(), c) == HostParse::NotCommand);
+}
+
+TEST(drive_model_sentence_round_trip) {
+    DriveParams p;
+    for (size_t i = 0; i < drivePresetCount(); ++i) {
+        drivePreset(drivePresetId(i), p);
+        const SeekModel m = seekModelOf(p);
+        char body[80];
+        CHECK(formatModelBody(&m, body, sizeof(body)) > 0);
+        const std::string l = sentenceLine(body);
+        SeekModel back;
+        bool present = false;
+        CHECK(parseModelSentence(l.data(), l.size(), back, present));
+        CHECK(present);
+        CHECK(back.actuator == m.actuator);
+        CHECK_EQ(int(back.rpm), int(m.rpm));
+        CHECK_EQ(int(back.cylinders), int(m.cylinders));
+        CHECK(std::fabs(back.fullStrokeMs - m.fullStrokeMs) < 0.051f);
+        CHECK(std::fabs(back.trackMs - m.trackMs) < 0.051f);
+        CHECK(std::fabs(back.settleDamp - m.settleDamp) < 0.0051f);
+        CHECK(std::fabs(back.stepMs - m.stepMs) < 0.051f);
+        CHECK(std::fabs(back.stepRamp - m.stepRamp) < 0.0051f);
+        CHECK(back.zoned == m.zoned);
+        CHECK(std::strlen(l.c_str()) <= SENTENCE_MAX_LINE);
+    }
+    char body[80];
+    CHECK(formatModelBody(nullptr, body, sizeof(body)) > 0);
+    CHECK(std::string(body) == "HDM,2,-");
+    std::string l = sentenceLine(body);
+    SeekModel m;
+    bool present = true;
+    CHECK(parseModelSentence(l.data(), l.size(), m, present));
+    CHECK(!present);
+    l = sentenceLine("HDM,2,V,5400");  // too few fields
+    CHECK(!parseModelSentence(l.data(), l.size(), m, present));
+    l = sentenceLine("HDM,1,-");  // version 1 had no $HDM
+    CHECK(!parseModelSentence(l.data(), l.size(), m, present));
+}
+
+TEST(drive_timing_matches_the_engine) {
+    // HDDSynthPro holds each command for seekTimeUs(): it must agree with the
+    // head the synth plays. Both notice "settled" on a 1 ms tick, but at
+    // different phases, and an underdamped head swinging through the track
+    // can look still on one tick and not the next: they may differ by 2 ms.
+    static DriveEngine e;
+    float buf[128];
+    for (size_t i = 0; i < drivePresetCount(); ++i) {
+        DriveParams p;
+        drivePreset(drivePresetId(i), p);
+        const SeekModel m = seekModelOf(p);
+        e.begin(32000, p);
+        e.power(true, true);
+        auto run = [&](float secs) { for (int b = 0; b < int(secs * 250); ++b) e.renderFloat(buf, 128); };
+        run(0.05f);
+        for (float d : {0.002f, 0.01f, 0.1f, 0.3f, 0.6f, 1.0f}) {
+            e.seekTo(0);
+            run(1.0f);
+            e.seekTo(d);
+            run(p.actuator == Actuator::Stepper ? 1.5f : 0.3f);
+            const double engineMs = e.lastSeekUs() / 1000.0, modelMs = seekTimeUs(m, 0, d) / 1000.0;
+            const bool ok = engineMs >= modelMs - 2.1 && engineMs <= modelMs + 2.1;
+            if (!ok) std::printf("  %s d=%.3f engine %.2f ms, model %.2f ms\n", drivePresetId(i), d, engineMs, modelMs);
+            CHECK(ok);
+        }
+        CHECK_EQ(int(seekTimeUs(m, 0.5f, 0.5f)), 0);  // the same track
+    }
+}
+
+TEST(drive_timing_rotation_and_transfer) {
+    SeekModel m;
+    m.rpm = 6000;  // 10 ms per revolution
+    CHECK_EQ(int(revolutionUs(m)), 10000);
+    // 100 sectors per track: sector 25 is a quarter turn round.
+    CHECK_EQ(int(rotationalWaitUs(m, 0, 25, 100)), 2500);
+    CHECK_EQ(int(rotationalWaitUs(m, 2500, 25, 100)), 0);       // it's under the head now
+    CHECK_EQ(int(rotationalWaitUs(m, 3000, 25, 100)), 9500);    // just missed it: nearly a whole turn
+    CHECK_EQ(int(rotationalWaitUs(m, 1000000, 125, 100)), 2500);  // any track, any time: the angle repeats
+    CHECK_EQ(int(transferUs(m, 50, 100)), 5000);                 // half a track
+    // Zoned recording: the first half of the LBAs covers under half the stroke (0.41).
+    CHECK(lbaToStroke(0.5f, true) < 0.42f);
+    CHECK(lbaToStroke(0.5f, true) > 0.40f);
+    CHECK(std::fabs(lbaToStroke(0.5f, false) - 0.5f) < 1e-6f);
+    CHECK(std::fabs(lbaToStroke(1, true) - 1) < 1e-4f);
+    CHECK(lbaToStroke(0, true) < 1e-6f);
+}
+
+TEST(drive_follows_link_targets) {
+    DriveParams p;  // the 1997 voice coil: 6000 cylinders
+    static DriveEngine e;
+    e.begin(32000, p);
+    e.power(true, true);
+    renderSecs(e, 0.01f, 32000);
+    e.seekToLba(0.5f);
+    renderSecs(e, 0.02f, 32000);
+    CHECK(e.busy());  // a target counts as transferring for 50 ms
+    renderSecs(e, 0.08f, 32000);
+    const uint32_t seeks = e.seekCount();
+    const uint32_t cyl = e.cylinder();
+    CHECK(std::abs(int(cyl) - int(lbaToStroke(0.5f, true) * 5999)) <= 1);
+    // Another sector on the same track: the head stays put.
+    e.seekToLba(0.5f + 1.0f / 6000 / 8);
+    renderSecs(e, 0.1f, 32000);
+    CHECK_EQ(e.seekCount(), seeks);
+    renderSecs(e, 0.1f, 32000);
+    CHECK(!e.busy());
+    // The far end: a long seek.
+    e.seekToLba(1.0f);
+    renderSecs(e, 0.1f, 32000);
+    CHECK_EQ(e.seekCount(), seeks + 1);
+    CHECK(e.lastSeekUs() > 5000);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -1558,6 +1722,12 @@ int main(int argc, char** argv) {
     RUN(drive_params_update_and_actuator_switch);
     RUN(drive_renders_as_a_mixer_voice);
     RUN(drive_two_threads_commands_while_rendering);
+    RUN(link_head_sentences);
+    RUN(host_model_query);
+    RUN(drive_model_sentence_round_trip);
+    RUN(drive_timing_matches_the_engine);
+    RUN(drive_timing_rotation_and_transfer);
+    RUN(drive_follows_link_targets);
     std::printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }
