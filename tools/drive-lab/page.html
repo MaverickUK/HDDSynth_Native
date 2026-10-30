@@ -87,7 +87,7 @@ select { background: var(--panel); border: 1px solid var(--line); border-radius:
 .bench { display: grid; gap: 14px; padding: 14px; }
 .stage { position: relative; }
 #platter { display: block; width: 100%; aspect-ratio: 4 / 3; max-width: 100%; border-radius: 4px; background: var(--sunk); cursor: crosshair; }
-.stage .hint { position: absolute; left: 10px; bottom: 8px; font-size: 12px; color: var(--muted); pointer-events: none; }
+.left { display: grid; gap: 14px; min-width: 0; }
 
 /* The drive's top-cover label */
 .cover-label {
@@ -189,6 +189,7 @@ input[type="range"] { accent-color: var(--accent); margin: 2px 0 0; }
   </header>
 
   <div class="grid">
+    <div class="left">
     <section class="panel bench" aria-label="Drive under test">
       <div class="cover-label" id="coverLabel">
         <div class="model"><b id="modelName">HS-5400</b><span id="modelNote"></span></div>
@@ -196,8 +197,7 @@ input[type="range"] { accent-color: var(--accent); margin: 2px 0 0; }
       </div>
 
       <div class="stage">
-        <canvas id="platter" width="800" height="600" aria-label="Top view of the drive: click the platter to seek the head there"></canvas>
-        <span class="hint" id="hint">Power the drive on, then click a track to seek there.</span>
+        <canvas id="platter" width="800" height="600" title="Click a track to seek the head there" aria-label="Top view of the drive: click the platter to seek the head there"></canvas>
       </div>
 
       <div class="row">
@@ -250,13 +250,6 @@ input[type="range"] { accent-color: var(--accent); margin: 2px 0 0; }
         <p class="note">For a fair A/B, load the same moment from a real drive: <span class="mono">idle.wav</span> against Idle, <span class="mono">access.wav</span> against Random 4K. The recording loops.</p>
       </div>
     </section>
-
-    <section class="designer" aria-label="Drive designer">
-      <div class="panel card">
-        <header><h2>Mixer</h2><p>Each layer of the drive's sound, live. Mute or solo one to hear what it adds.</p></header>
-        <div class="mixer" id="mixer"></div>
-      </div>
-      <div class="cards" id="cards"></div>
       <div class="panel card json">
         <header><h2>drive.json</h2><p>These settings as JSON, the format a sample pack would carry for the firmware engine. Copy it out, or paste one in and apply it.</p></header>
         <textarea id="json" spellcheck="false" aria-label="Drive settings as JSON"></textarea>
@@ -267,6 +260,14 @@ input[type="range"] { accent-color: var(--accent); margin: 2px 0 0; }
           <span class="status" id="jsonStatus"></span>
         </div>
       </div>
+    </div>
+
+    <section class="designer" aria-label="Drive designer">
+      <div class="panel card">
+        <header><h2>Mixer</h2><p>Each layer of the drive's sound, live. Mute or solo one to hear what it adds.</p></header>
+        <div class="mixer" id="mixer"></div>
+      </div>
+      <div class="cards" id="cards"></div>
     </section>
   </div>
 
@@ -808,7 +809,6 @@ registerProcessor('drive-processor', DriveProcessor);`;
     const toW = (r) => Math.max(0, Math.min(100, (20 * Math.log10(Math.max(r, 1e-5)) + 60) / 60 * 100));
     tel.rms.forEach((r, i) => { meters[i].style.width = toW(r * 3) + '%'; });
     meters[5].style.width = toW(Math.sqrt(tel.rms.reduce((a, r) => a + r * r, 0)) * 3 * master) + '%';
-    $('#hint').textContent = tel.state === 'ready' ? 'Click a track to seek there.' : tel.powered ? 'Spinning up…' : 'Power the drive on, then click a track to seek there.';
   }
 
   function frame(now) {
