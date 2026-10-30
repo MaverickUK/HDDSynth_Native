@@ -20,4 +20,5 @@ python3 tools/drive-lab/build.py --site DIR   # -> DIR/index.html, the website (
   `src/drive_engine.*` is a port of it: **change both together.**
   `compare.js` (run by `test/run_native_tests.sh` when node is installed)
   renders the same scenario on both and fails if they disagree.
-- `page.html` is the page around it; `build.py` inlines the engine.
+- `page.html` is the page around it; `build.py` inlines the engine and
+  `logo.png` (the HDD Synth logo, as in the companion app's About box).

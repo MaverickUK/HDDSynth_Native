@@ -8,11 +8,13 @@ The plain build is the page's body, for publishing as a claude.ai artifact (whic
 document skeleton). The site build wraps it in a full HTML document with the base styles the
 artifact skeleton would provide, a favicon, and the website-only features (downloading drive.json).
 """
+import base64
 import sys
 from pathlib import Path
 
 here = Path(__file__).resolve().parent
-page = (here / "page.html").read_text().replace("/*ENGINE*/", (here / "engine.js").read_text())
+logo = "data:image/png;base64," + base64.b64encode((here / "logo.png").read_bytes()).decode()
+page = (here / "page.html").read_text().replace("/*ENGINE*/", (here / "engine.js").read_text()).replace("/*LOGO*/", logo)
 
 # A platter and arm, for the browser tab.
 FAVICON = (

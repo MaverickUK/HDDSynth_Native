@@ -61,6 +61,11 @@ button, select, input { font: inherit; color: inherit; }
 
 /* Header */
 .top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 14px 24px; }
+.brand { display: flex; align-items: center; gap: 16px; min-width: 0; }
+/* The logo is black on transparent: on its own light tile, so it reads in dark mode too. */
+.logo { flex: none; display: block; background: #FFFFFF; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.logo img { display: block; height: 56px; width: auto; }
+@media (max-width: 480px) { .logo img { height: 42px; } }
 .title h1 { font-size: 30px; font-weight: 700; letter-spacing: 0.01em; line-height: 1.05; }
 .title p { margin: 4px 0 0; color: var(--muted); max-width: 62ch; }
 .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
@@ -167,9 +172,12 @@ input[type="range"] { accent-color: var(--accent); margin: 2px 0 0; }
 
 <div class="wrap">
   <header class="top">
-    <div class="title">
-      <h1>HDD Synth Drive Lab</h1>
-      <p>A physically modelled hard drive. A virtual head seeks with real actuator physics, and the spindle, bearing, air and arm are synthesised live. Tune it the way you'd spec a drive.</p>
+    <div class="brand">
+      <a class="logo" href="https://github.com/MaverickUK/HDDSynth" title="The HDD Synth project"><img src="/*LOGO*/" alt="HDD Synth" width="79" height="56"></a>
+      <div class="title">
+        <h1>HDD Synth Drive Lab</h1>
+        <p>A physically modelled hard drive. A virtual head seeks with real actuator physics, and the spindle, bearing, air and arm are synthesised live. Tune it the way you'd spec a drive.</p>
+      </div>
     </div>
     <div class="controls">
       <div class="field-inline">
