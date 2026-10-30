@@ -1,14 +1,16 @@
 // A modelled pack's /samples/<pack>/drive.json: the drive the engine
 // synthesises in place of the pack's WAVs. The format is what the browser
-// prototype (tools/drive-lab) exports:
+// prototype (tools/drive-lab) exports, grouped as its cards:
 //
-//   { "format": "hddsynth-drive", "version": 1, "name": "1997 voice coil",
+//   { "format": "hddsynth-drive", "version": 2, "name": "1997 voice coil",
 //     "preset": "voice97", "sampleRate": 32000,
-//     "params": { "rpm": 5400, "actuator": "voice", ... } }
+//     "spindle": { "rpm": 5400, ... }, "actuator": { "type": "voice", ... },
+//     ..., "mixer": { "spindle": 1, ..., "master": 0.8 } }
 //
 // Every key is optional: "preset" (default voice97) gives the starting
-// parameters and "params" overrides any of them. Keys and ranges are in
-// drive_params.h and the README.
+// parameters and the groups override any of them. Groups and keys are in
+// drive_params.h and the README. Version 1 (one flat "params" object) is
+// refused.
 #pragma once
 
 #include <stdint.h>
@@ -19,7 +21,7 @@ struct DrivePack {
     DriveParams params;
     uint32_t sampleRate = 32000;  // the output rate while the pack is loaded
     char name[48] = {0};
-    int unknownKeys = 0;          // keys in "params" this firmware doesn't know (logged)
+    int unknownKeys = 0;          // keys this firmware doesn't know (logged)
     int badValues = 0;            // known keys with an unusable value (kept at the preset's)
 };
 

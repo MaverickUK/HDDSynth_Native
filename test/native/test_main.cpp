@@ -1257,24 +1257,29 @@ TEST(drive_presets_and_param_keys) {
     CHECK_EQ(int(p.cylinders), 615);
 
     p = DriveParams{};
-    CHECK(setDriveParam(p, "rpm", 7200) == ParamResult::Ok);
+    CHECK(setDriveParam(p, "spindle", "rpm", 7200) == ParamResult::Ok);
     CHECK_EQ(int(p.rpm), 7200);
-    CHECK(setDriveParam(p, "rpm", 99999) == ParamResult::Ok);  // clamped to the range
+    CHECK(setDriveParam(p, "spindle", "rpm", 99999) == ParamResult::Ok);  // clamped to the range
     CHECK_EQ(int(p.rpm), 15000);
-    CHECK(setDriveParam(p, "platters", 2.6f) == ParamResult::Ok);  // a count: rounded
+    CHECK(setDriveParam(p, "platters", "count", 2.6f) == ParamResult::Ok);  // a count: rounded
     CHECK_EQ(int(p.platters), 3);
-    CHECK(setDriveParam(p, "zoned", 0) == ParamResult::Ok);
+    CHECK(setDriveParam(p, "platters", "zoned", 0) == ParamResult::Ok);
     CHECK(!p.zoned);
-    CHECK(setDriveParam(p, "nonsense", 1) == ParamResult::UnknownKey);
-    CHECK(setDriveParam(p, "rpm", NAN) == ParamResult::BadValue);
-    CHECK(setDriveChoice(p, "actuator", "stepper") == ParamResult::Ok);
+    CHECK(setDriveParam(p, "spindle", "nonsense", 1) == ParamResult::UnknownKey);
+    CHECK(setDriveParam(p, "spindle", "rpm", NAN) == ParamResult::BadValue);
+    CHECK(setDriveChoice(p, "actuator", "type", "stepper") == ParamResult::Ok);
     CHECK(p.actuator == Actuator::Stepper);
-    CHECK(setDriveChoice(p, "park", "ramp") == ParamResult::Ok);
+    CHECK(setDriveChoice(p, "heads", "parking", "ramp") == ParamResult::Ok);
     CHECK(p.park == Parking::Ramp);
-    CHECK(setDriveChoice(p, "size", "5.25") == ParamResult::Ok);
+    CHECK(setDriveChoice(p, "platters", "size", "5.25") == ParamResult::Ok);
     CHECK(p.size == FormFactor::In525);
-    CHECK(setDriveChoice(p, "mount", "floating") == ParamResult::BadValue);
-    CHECK(setDriveChoice(p, "rpm", "fast") == ParamResult::UnknownKey);  // a number key given text
+    CHECK(setDriveChoice(p, "enclosure", "mount", "floating") == ParamResult::BadValue);
+    CHECK(setDriveChoice(p, "spindle", "rpm", "fast") == ParamResult::UnknownKey);  // a number key given text
+    CHECK(setDriveParam(p, "actuator", "rpm", 3600) == ParamResult::UnknownKey);  // the wrong group
+    CHECK(setDriveParam(p, "mixer", "air", 0.5f) == ParamResult::Ok);  // a layer gain
+    CHECK(p.gWind == 0.5f);
+    CHECK(setDriveParam(p, "bearing", "noise", 0.2f) == ParamResult::Ok);
+    CHECK(p.bearingLvl == 0.2f);
 }
 
 // Render `secs` of the engine, returning the peak; fails on NaN.

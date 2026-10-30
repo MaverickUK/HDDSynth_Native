@@ -185,32 +185,40 @@ The easiest way to make one is the **Drive Lab**, online at
 <https://maverickuk.github.io/HDDSynth_Native/drive-lab/> (source in
 [`tools/drive-lab`](tools/drive-lab)): tune the drive by ear, with a real
 pack's WAV alongside to compare, and download its `drive.json`.
-The smallest drive.json names a built-in preset:
+The smallest drive.json names a built-in preset, and any group can then
+change some of its parameters:
 
 ```json
-{ "format": "hddsynth-drive", "version": 1, "name": "1997 voice coil",
-  "preset": "voice97", "sampleRate": 32000, "params": { "rpm": 5400 } }
+{ "format": "hddsynth-drive", "version": 2, "name": "1997 voice coil",
+  "preset": "voice97", "sampleRate": 32000,
+  "spindle": { "rpm": 7200 }, "bearing": { "type": "fdb" } }
 ```
+
+The Drive Lab exports every group in full, grouped as its cards. The flat
+format of v0.20.0 and v0.21.0 (version 1, one `params` object) is refused
+(the log says so): set the drive up again in the Drive Lab and copy the
+new one.
 
 | Key | Default | What it does |
 |---|---|---|
 | `preset` | `voice97` | Starting parameters: `stepper85` (1985, 5.25″ MFM stepper, 3600 rpm), `voice91` (1991, 3.5″ voice coil, 3600 rpm, landing zone), `voice97` (1997, 5400 rpm, thermal recalibration) or `fdb05` (2005, 7200 rpm, fluid bearing, ramp load). |
 | `sampleRate` | `32000` | The output rate while the pack plays: 16000, 22050, 32000, 44100 or 48000. The engine takes about a quarter of the audio core at 32 kHz. |
 | `name` | *(none)* | Logged at load (`pack.json`'s `NAME` still names the pack). |
-| `params` | *(none)* | Any of the parameters below, overriding the preset's. Unknown keys and bad values are logged and skipped. |
+| *the groups below* | *(none)* | Each overrides the preset's parameters it names. Unknown groups or keys, and bad values, are logged and skipped. |
 
-The parameters (numbers are clamped to their range):
+The groups and their parameters, as the Drive Lab's cards (numbers are
+clamped to their range):
 
 | Group | Parameters |
 |---|---|
-| Spindle | `rpm` (1800-15000), `spinupS` (1-20 s), `coastS` (2-30 s, the coast-down and so the spindown's length), `slots` (6-18), `polePairs` (2-8), `whine`, `hum`, `imbalance` (0-1) |
-| Platters and air | `platters` (1-10), `size` (`"5.25"`, `"3.5"`, `"2.5"`), `windage` (0-1), `zoned` (true: LBA 0 at the outer edge, with more sectors per track there) |
-| Bearing | `bearing` (`"ball"`, `"fdb"`), `wear`, `bearingLvl` (0-1) |
-| Actuator | `actuator` (`"voice"`, `"stepper"`), `cylinders` (300-100000), `tick` (0-1, the track-to-track tick); voice coil: `fullStrokeMs` (8-60), `trackMs` (0.5-8), `settleDamp` (0.1-1.2), `buzz` (0-1); stepper: `stepMs` (0.2-6), `stepRamp` (0-1, buffered seeks) |
-| Resonance | `armHz` (200-4000), `armRingMs` (5-200), `caseHz` (80-1200), `caseRingMs` (10-400), `hardness` (0-1) |
-| Head events | `park` (`"ramp"`, `"zone"`, `"none"`), `calSeeks` (0-8), `recalS` (0-120 s, 0 off), `wedges` (0-400 servo wedges), `servo` (0-1) |
-| Enclosure | `mount` (`"bare"`, `"case"`, `"sled"`), `bright` (-1 to 1), `caseRes` (0-1) |
-| Mixer | `gSpindle`, `gBearing`, `gWind`, `gAct`, `gServo` (0-1.5, per layer), `master` (0-1.5) |
+| `spindle` | `rpm` (1800-15000), `spinupS` (1-20 s), `coastS` (2-30 s, the coast-down and so the spindown's length), `slots` (6-18), `polePairs` (2-8), `whine`, `hum`, `imbalance` (0-1) |
+| `platters` (platters and air) | `count` (1-10), `size` (`"5.25"`, `"3.5"`, `"2.5"`), `windage` (0-1), `zoned` (true: LBA 0 at the outer edge, with more sectors per track there) |
+| `bearing` | `type` (`"ball"`, `"fdb"`), `wear`, `noise` (0-1) |
+| `actuator` | `type` (`"voice"`, `"stepper"`), `cylinders` (300-100000), `tick` (0-1, the track-to-track tick); voice coil: `fullStrokeMs` (8-60), `trackMs` (0.5-8), `settleDamp` (0.1-1.2), `buzz` (0-1); stepper: `stepMs` (0.2-6), `stepRamp` (0-1, buffered seeks) |
+| `resonance` (arm and case) | `armHz` (200-4000), `armRingMs` (5-200), `caseHz` (80-1200), `caseRingMs` (10-400), `hardness` (0-1) |
+| `heads` (head events) | `parking` (`"ramp"`, `"zone"`, `"none"`), `calSeeks` (0-8), `recalS` (0-120 s, 0 off), `wedges` (0-400 servo wedges), `servo` (0-1) |
+| `enclosure` | `mount` (`"bare"`, `"case"`, `"sled"`), `bright` (-1 to 1), `caseRes` (0-1) |
+| `mixer` | `spindle`, `bearing`, `air`, `actuator`, `servo` (0-1.5, per layer), `master` (0-1.5). The Drive Lab exports its mixer's gains (not mute or solo). |
 
 The spindown on a power cut is the coast-down: `coastS` long, entirely
 from RAM, like a recorded spindown in RAM. The serial `t` stress test

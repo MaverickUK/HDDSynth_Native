@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org). Linked versions have a
 release with its UF2 on the
 [releases page](https://github.com/MaverickUK/HDDSynth_Native/releases).
 
+## [0.22.0] - 2026-10-30
+
+### Changed
+- **drive.json is grouped** as the Drive Lab's cards (format version 2):
+  `spindle`, `platters`, `bearing`, `actuator`, `resonance`, `heads`,
+  `enclosure` and `mixer`, each an object of its parameters, in place of one
+  flat `params` object. Keys that repeated their group's name are shorter:
+  `platters.count`, `bearing.type`, `bearing.noise`, `actuator.type`,
+  `heads.parking`, and the mixer's `spindle`, `bearing`, `air`, `actuator`
+  and `servo`. **Incompatible:** a version 1 drive.json is refused, with
+  the reason in the log; set it up again in the Drive Lab and copy the new
+  one.
+- The Drive Lab exports its mixer's gains too, and its drive.json box has a
+  tinted background.
+
 ## [0.21.0] - 2026-10-30
 
 ### Added

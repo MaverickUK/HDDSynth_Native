@@ -289,7 +289,8 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   Verified 2026-10-30 on hardware with the four presets (packs
   `MODEL_*` on the test card): ~0.9-1.05 ms per 4 ms block at 32 kHz with
   simulated activity, no underflows, the modelled spindown on a simulated
-  power loss (8.3 s for `voice97`). v0.21.0 added `$HDE` head positions and
+  power loss (8.3 s for `voice97`). v0.22.0 grouped drive.json as the
+  Drive Lab's cards (version 2; version 1 is refused). v0.21.0 added `$HDE` head positions and
   `$HDM` (HDDSynthPro side briefed in its docs/hddsynth-head-position-brief.md).
   Still to do: live tuning from the companion app (`$HDC,1,SET`), and
   optional recorded grains (seek, park) per pack.

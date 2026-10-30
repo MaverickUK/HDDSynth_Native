@@ -153,6 +153,8 @@ input[type="range"] { accent-color: var(--accent); margin: 2px 0 0; }
 .ms button[aria-pressed="true"].s { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .meter { height: 8px; background: var(--sunk); border-radius: 2px; overflow: hidden; }
 .meter i { display: block; height: 100%; width: 0; background: var(--trace); transition: width 60ms linear; }
+/* drive.json is what goes on the card: a tint of the accent so it stands out. */
+.panel.json { background: color-mix(in srgb, var(--accent) 9%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
 .json textarea { width: 100%; min-height: 120px; font-family: var(--mono); font-size: 11.5px; background: var(--sunk); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 8px; resize: vertical; }
 .btn { border: 1px solid var(--line); background: var(--panel); padding: 6px 12px; border-radius: 4px; cursor: pointer; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
@@ -544,9 +546,21 @@ registerProcessor('drive-processor', DriveProcessor);`;
   }
 
   // ---------- JSON ----------
+  // drive.json is grouped as the cards above. A key that would repeat its
+  // group's name is shorter there (bearing.type, not bearing.bearing).
+  const JSON_KEY = { platters: 'count', bearing: 'type', bearingLvl: 'noise', actuator: 'type', park: 'parking' };
+  const jsonKey = (key) => JSON_KEY[key] || key;
+  const layerKey = (l) => l.name.toLowerCase();
   function updateJson() {
     const pr = PRESETS.find((x) => x.id === presetId);
-    $('#json').value = JSON.stringify({ format: 'hddsynth-drive', version: 1, name: pr ? pr.name : 'Custom', params }, null, 2);
+    const j = { format: 'hddsynth-drive', version: 2, name: pr ? pr.name : 'Custom' };
+    Object.keys(GROUPS).forEach((g) => { j[g] = {}; });
+    PARAMS.forEach(([group, key]) => { j[group][jsonKey(key)] = params[key]; });
+    // The mixer's gains, not its mute and solo: those are for listening here.
+    j.mixer = {};
+    LAYERS.forEach((l) => { j.mixer[layerKey(l)] = l.g; });
+    j.mixer.master = master;
+    $('#json').value = JSON.stringify(j, null, 2);
   }
   $('#copyJson').addEventListener('click', () => {
     const ta = $('#json');
@@ -570,14 +584,21 @@ registerProcessor('drive-processor', DriveProcessor);`;
   $('#applyJson').addEventListener('click', () => {
     try {
       const j = JSON.parse($('#json').value);
-      const src = j.params || j;
+      if (j.params || j.version < 2) {
+        $('#jsonStatus').textContent = 'That\'s the old flat format (version 1): set it up again and copy the new one';
+        return;
+      }
       const next = Object.assign({}, params);
-      PARAMS.forEach(([, key, , kind, a, b]) => {
-        if (!(key in src)) return;
-        if (kind === 'range') next[key] = Math.min(b, Math.max(a, +src[key]));
-        else if (kind === 'check') next[key] = !!src[key];
-        else if (a.includes(src[key])) next[key] = src[key];
+      PARAMS.forEach(([group, key, , kind, a, b]) => {
+        const src = j[group] || {}, k = jsonKey(key);
+        if (!(k in src)) return;
+        if (kind === 'range') next[key] = Math.min(b, Math.max(a, +src[k]));
+        else if (kind === 'check') next[key] = !!src[k];
+        else if (a.includes(src[k])) next[key] = src[k];
       });
+      const mix = j.mixer || {}, gain = (v, d) => (typeof v === 'number' ? Math.min(1.5, Math.max(0, v)) : d);
+      LAYERS.forEach((l) => { l.g = gain(mix[layerKey(l)], l.g); l.inp.value = l.g; });
+      master = gain(mix.master, master); masterRow.querySelector('input').value = master;
       params = next; presetId = 'custom';
       syncControls(); onParamsChanged(false);
       $('#jsonStatus').textContent = 'Applied';
@@ -601,13 +622,14 @@ registerProcessor('drive-processor', DriveProcessor);`;
     return row;
   }
   LAYERS.forEach((l, i) => {
-    const row = mixRow(l.name, (g) => { l.g = g; pushParams(); }, l.g, true);
+    const row = mixRow(l.name, (g) => { l.g = g; pushParams(); updateJson(); }, l.g, true);
+    l.inp = row.querySelector('input');
     const [m, s] = row.querySelectorAll('.ms button');
     m.addEventListener('click', () => { l.m = !l.m; m.setAttribute('aria-pressed', String(l.m)); pushParams(); });
     s.addEventListener('click', () => { l.s = !l.s; s.setAttribute('aria-pressed', String(l.s)); pushParams(); });
     meters[i] = row.querySelector('.meter i');
   });
-  const masterRow = mixRow('Master', (g) => { master = g; pushParams(); }, master, false);
+  const masterRow = mixRow('Master', (g) => { master = g; pushParams(); updateJson(); }, master, false);
   meters[5] = masterRow.querySelector('.meter i');
 
   // ---------- drawing ----------

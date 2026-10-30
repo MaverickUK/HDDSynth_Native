@@ -13,6 +13,10 @@ bool parseDriveJson(const char* json, DrivePack& out, const char*& why) {
         why = "not valid JSON";
         return false;
     }
+    if (doc["version"].is<int>() && doc["version"].as<int>() < 2) {
+        why = "version 1 (flat) format: export it again from the Drive Lab";
+        return false;
+    }
     if (doc["preset"].is<const char*>() && !drivePreset(doc["preset"].as<const char*>(), out.params)) {
         why = "unknown preset";
         return false;
@@ -25,15 +29,27 @@ bool parseDriveJson(const char* json, DrivePack& out, const char*& why) {
         }
     }
     if (doc["name"].is<const char*>()) strncpy(out.name, doc["name"].as<const char*>(), sizeof(out.name) - 1);
-    for (JsonPairConst kv : doc["params"].as<JsonObjectConst>()) {
-        const char* key = kv.key().c_str();
-        ParamResult r;
-        if (kv.value().is<const char*>()) r = setDriveChoice(out.params, key, kv.value().as<const char*>());
-        else if (kv.value().is<bool>()) r = setDriveParam(out.params, key, kv.value().as<bool>() ? 1.0f : 0.0f);
-        else if (kv.value().is<float>()) r = setDriveParam(out.params, key, kv.value().as<float>());
-        else r = ParamResult::BadValue;
-        if (r == ParamResult::UnknownKey) out.unknownKeys++;
-        else if (r == ParamResult::BadValue) out.badValues++;
+    for (JsonPairConst top : doc.as<JsonObjectConst>()) {
+        const char* group = top.key().c_str();
+        if (!top.value().is<JsonObjectConst>()) {
+            // The pack's own keys, above; any other value outside a group is unknown.
+            static const char* const OWN[] = {"format", "version", "name", "preset", "sampleRate"};
+            bool own = false;
+            for (const char* k : OWN) own = own || !strcmp(group, k);
+            if (!own) out.unknownKeys++;
+            continue;
+        }
+        for (JsonPairConst kv : top.value().as<JsonObjectConst>()) {
+            const char* key = kv.key().c_str();
+            JsonVariantConst v = kv.value();
+            ParamResult r;
+            if (v.is<const char*>()) r = setDriveChoice(out.params, group, key, v.as<const char*>());
+            else if (v.is<bool>()) r = setDriveParam(out.params, group, key, v.as<bool>() ? 1.0f : 0.0f);
+            else if (v.is<float>()) r = setDriveParam(out.params, group, key, v.as<float>());
+            else r = ParamResult::BadValue;
+            if (r == ParamResult::UnknownKey) out.unknownKeys++;
+            else if (r == ParamResult::BadValue) out.badValues++;
+        }
     }
     return true;
 }
