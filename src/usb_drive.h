@@ -7,8 +7,14 @@
 
 namespace usbdrive {
 
-// Is the action button held (checked at boot, for ~300 ms)?
+// Should this boot share the card: was it asked for before the reboot
+// (requestAtNextBoot()), or is the action button held (for ~300 ms)?
 bool requested();
+
+// Ask the next boot to share the card (the serial `u` command), then reboot.
+// The request lives in a watchdog scratch register, which keeps its value
+// through a reset but not a power cut, and is cleared once it's read.
+void requestAtNextBoot();
 
 // Share the card until it's ejected or the action button is pressed, then
 // reboot. Never returns.

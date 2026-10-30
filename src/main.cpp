@@ -584,7 +584,7 @@ void handleSerial() {
             case 'h':
                 Console.println("firmware v" FIRMWARE_VERSION);
                 Console.println("h help | s stats | t stress on/off | p simulate power loss | "
-                               "a toggle simulated activity | + / - volume | > / < balance | n next pack | k beep test | l power log | d list SD root | m demo mode | o OLED mode | z standby | j replay jingle | r reboot | b bootloader");
+                               "a toggle simulated activity | + / - volume | > / < balance | n next pack | k beep test | l power log | d list SD root | m demo mode | o OLED mode | z standby | j replay jingle | r reboot | u USB drive mode | b bootloader");
                 Console.println("lines starting with $ are the companion app's protocol (see the README)");
                 break;
             case 's': printStats(); break;
@@ -663,6 +663,10 @@ void handleSerial() {
                 Console.printf("[demo] %s\n", settings.demoMode ? "on" : "off");
                 break;
             case 'r': reboot(); break;
+            case 'u':  // share the SD card over USB: reboot into USB drive mode
+                Console.println("[usb] rebooting into USB drive mode; eject the drive to return");
+                usbdrive::requestAtNextBoot();
+                reboot();
             case 'b': reboot(/*toBootloader*/ true); break;
             default: break;
         }
@@ -1012,7 +1016,8 @@ void boot() {
     printSettings(settings);
     memcpy(settingsLedColour, settings.activityLedColour, 3);
 
-    // Action button held at power-on: share the SD card over USB instead
+    // Action button held at power-on (or serial `u` before the reboot): share
+    // the SD card over USB instead
     // (checked before anything writes to the card).
     if (usbdrive::requested()) {
         oled::begin(settings);

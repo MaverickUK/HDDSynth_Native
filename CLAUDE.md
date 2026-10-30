@@ -244,7 +244,8 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   / `writeSectors()`). 64-byte USB slices: 4 KB read-ahead, writes gathered
   per sector. The loop runs `tud_task()` itself under `USB.mutex` (the core's
   1 ms timer alone gave ~64 KB/s; now ~450 KB/s). macOS signals eject with
-  START STOP UNIT → reboot. Verified 2026-10-22 (mount, read, write, eject).
+  START STOP UNIT → reboot. Serial `u` reboots into it (a watchdog scratch
+  register carries the request, v0.23.0). Verified 2026-10-22 (mount, read, write, eject).
 - Jingle light show: while the jingle plays, the RGB LED cycles the rainbow
   (`cfg::JINGLE_RAINBOW_MS`) and its brightness follows the loudness. Core 1
   publishes each mixed block's peak (`audio::outputPeak()`); core 0 smooths

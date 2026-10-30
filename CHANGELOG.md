@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org). Linked versions have a
 release with its UF2 on the
 [releases page](https://github.com/MaverickUK/HDDSynth_Native/releases).
 
+## [0.23.0] - 2026-10-30
+
+### Added
+- Serial `u`: reboot into USB drive mode (share the SD card over USB)
+  without holding the action button. The request survives the reboot in a
+  watchdog scratch register and is used once.
+
 ## [0.22.0] - 2026-10-30
 
 ### Changed

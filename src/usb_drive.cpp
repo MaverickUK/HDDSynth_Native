@@ -1,6 +1,7 @@
 #include "usb_drive.h"
 
 #include <Arduino.h>
+#include <hardware/structs/watchdog.h>
 #include <USB.h>
 #include <pico/mutex.h>
 #include <class/msc/msc.h>
@@ -46,7 +47,17 @@ void flushWrite() {
 
 } // namespace
 
+// Watchdog scratch 0: the SDK and boot ROM use 4-7 (reboot magic), and
+// nothing here uses 0-3.
+constexpr uint32_t DRIVE_MAGIC = 0x55534244;  // "USBD"
+
+void requestAtNextBoot() { watchdog_hw->scratch[0] = DRIVE_MAGIC; }
+
 bool requested() {
+    if (watchdog_hw->scratch[0] == DRIVE_MAGIC) {
+        watchdog_hw->scratch[0] = 0;  // once: the next reboot is a normal one
+        return true;
+    }
     pinMode(cfg::PIN_ACTION_BUTTON, INPUT_PULLUP);
     for (int i = 0; i < 30; ++i) {  // held for 300 ms, not a bounce
         if (digitalRead(cfg::PIN_ACTION_BUTTON) != LOW) return false;

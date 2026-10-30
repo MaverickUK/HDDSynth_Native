@@ -404,7 +404,8 @@ You don't need to take the card out to change packs or settings.json:
 
 1. **Hold the action button while powering on** (or while tapping RESET),
    for about a second. The RGB LED turns **solid blue** and the OLED, if
-   fitted, shows "USB drive".
+   fitted, shows "USB drive". Or, from the serial console, type `u`: the
+   board reboots straight into USB drive mode.
 2. The SD card appears on the computer as a drive (named after the card's
    volume label). No audio plays in this mode.
 3. Copy packs in, edit settings.json, and so on (about 450 KB/s each way).
@@ -551,6 +552,7 @@ o  next OLED mode: activity, supercap, debug (not saved)
 z  go into standby now (as if STANDBY_MINUTES had passed)
 j  replay the jingle (clears its flag and reboots)
 r  reboot
+u  reboot into USB drive mode (share the SD card; eject it to return)
 b  reboot into the USB bootloader
 $  a line starting with $ is the companion app's protocol (see above)
 ```
