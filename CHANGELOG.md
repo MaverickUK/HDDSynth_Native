@@ -6,6 +6,32 @@ follow [Semantic Versioning](https://semver.org). Linked versions have a
 release with its UF2 on the
 [releases page](https://github.com/MaverickUK/HDDSynth_Native/releases).
 
+## [0.20.0] - 2026-10-30
+
+### Added
+- **Modelled drives:** a pack can be a physics model of a drive instead of
+  recordings. Put a `drive.json` in the pack's folder and the audio core
+  synthesises the drive live:
+  - the spindle spins up and coasts down (hum, motor whine, bearing, air);
+  - a virtual head seeks with a voice coil's or a stepper's physics, ringing
+    the arm and case modes;
+  - power-on unparks and calibrates, and a power cut parks the heads and
+    coasts down (the spindown, from RAM).
+
+  HDD activity drives a virtual workload (random access, or a file copy
+  after 1.5 s of continuous activity, or the class the HDDSynthPro link or
+  companion app sends). Four presets cover 1985 to 2005 drives, and every
+  parameter can be set in drive.json (README, "Modelled drives"). The
+  browser prototype used to design them, the Drive Lab, is online at
+  <https://maverickuk.github.io/HDDSynth_Native/drive-lab/> (source in
+  `tools/drive-lab`); the native tests check that the firmware's engine
+  matches it.
+
+### Changed
+- The firmware uses about 7 KB more RAM all the time (the modelled drive's
+  code runs from RAM), so the largest spindown that fits in RAM is now
+  about 359 KB (11.2 s at 16 kHz). Every current pack still fits.
+
 ## [0.19.0] - 2026-10-29
 
 ### Added

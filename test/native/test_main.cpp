@@ -1,6 +1,6 @@
 // Host-side unit tests for the platform-independent firmware code:
 // WAV parsing, the power log and persisted-state formats, encoder and
-// button handling, beep synthesis, OLED screens, the SPSC ring buffer and the mixer (including a two-thread
+// button handling, beep synthesis, OLED screens, the modelled drive, the SPSC ring buffer and the mixer (including a two-thread
 // producer/consumer test that mirrors core 0 / core 1).
 //
 // Run: test/run_native_tests.sh [path/to/HDDSynth_Samples]
@@ -18,6 +18,8 @@
 #include <vector>
 
 #include "mixer.h"
+#include "drive_engine.h"
+#include "drive_params.h"
 #include "oled_model.h"
 #include "oled_screens.h"
 #include "beep.h"
@@ -1242,6 +1244,241 @@ TEST(host_sanitise_name) {
     CHECK(strcmp(out, "a much ") == 0);  // truncated, still terminated
 }
 
+// ---- the modelled drive (drive_params, drive_engine) --------------------------
+
+TEST(drive_presets_and_param_keys) {
+    CHECK_EQ(drivePresetCount(), size_t(4));
+    DriveParams p;
+    for (size_t i = 0; i < drivePresetCount(); ++i) CHECK(drivePreset(drivePresetId(i), p));
+    CHECK(!drivePreset("nonsense", p));
+    CHECK(drivePreset("stepper85", p));
+    CHECK(p.actuator == Actuator::Stepper);
+    CHECK_EQ(int(p.cylinders), 615);
+
+    p = DriveParams{};
+    CHECK(setDriveParam(p, "rpm", 7200) == ParamResult::Ok);
+    CHECK_EQ(int(p.rpm), 7200);
+    CHECK(setDriveParam(p, "rpm", 99999) == ParamResult::Ok);  // clamped to the range
+    CHECK_EQ(int(p.rpm), 15000);
+    CHECK(setDriveParam(p, "platters", 2.6f) == ParamResult::Ok);  // a count: rounded
+    CHECK_EQ(int(p.platters), 3);
+    CHECK(setDriveParam(p, "zoned", 0) == ParamResult::Ok);
+    CHECK(!p.zoned);
+    CHECK(setDriveParam(p, "nonsense", 1) == ParamResult::UnknownKey);
+    CHECK(setDriveParam(p, "rpm", NAN) == ParamResult::BadValue);
+    CHECK(setDriveChoice(p, "actuator", "stepper") == ParamResult::Ok);
+    CHECK(p.actuator == Actuator::Stepper);
+    CHECK(setDriveChoice(p, "park", "ramp") == ParamResult::Ok);
+    CHECK(p.park == Parking::Ramp);
+    CHECK(setDriveChoice(p, "size", "5.25") == ParamResult::Ok);
+    CHECK(p.size == FormFactor::In525);
+    CHECK(setDriveChoice(p, "mount", "floating") == ParamResult::BadValue);
+    CHECK(setDriveChoice(p, "rpm", "fast") == ParamResult::UnknownKey);  // a number key given text
+}
+
+// Render `secs` of the engine, returning the peak; fails on NaN.
+static float renderSecs(DriveEngine& e, float secs, uint32_t rate, double* sumSq = nullptr) {
+    float buf[128], peak = 0;
+    bool finite = true;
+    const int blocks = int(secs * rate / 128 + 0.5f);
+    for (int b = 0; b < blocks; ++b) {
+        e.renderFloat(buf, 128);
+        for (float y : buf) {
+            finite = finite && std::isfinite(y);
+            if (std::fabs(y) > peak) peak = std::fabs(y);
+            if (sumSq) *sumSq += double(y) * y;
+        }
+    }
+    CHECK(finite);
+    return peak;
+}
+
+TEST(drive_spins_up_calibrates_and_spins_down) {
+    for (size_t i = 0; i < drivePresetCount(); ++i) {
+        DriveParams p;
+        drivePreset(drivePresetId(i), p);
+        static DriveEngine e;
+        e.begin(32000, p);
+        CHECK(e.state() == DriveState::Off);
+        CHECK(e.stopped());
+        e.power(true);
+        float t = 0;
+        while (e.state() != DriveState::Ready && t < 30) { renderSecs(e, 0.1f, 32000); t += 0.1f; }
+        // Spin-up takes spinupS, then the calibration seeks.
+        CHECK(t >= p.spinupS * 0.9f);
+        CHECK(t <= p.spinupS * 1.1f + 1.5f);
+        CHECK(std::abs(int(e.rpm()) - int(p.rpm)) <= int(p.rpm) / 50);
+        e.power(false);
+        t = 0;
+        while (!e.stopped() && t < 40) { renderSecs(e, 0.1f, 32000); t += 0.1f; }
+        // The coast-down takes coastS (it stops at under 2% of full speed).
+        CHECK(t >= p.coastS * 0.85f);
+        CHECK(t <= p.coastS * 1.05f);
+    }
+}
+
+TEST(drive_seek_times_follow_bang_bang_physics) {
+    DriveParams p;  // the 1997 voice coil
+    static DriveEngine e;
+    e.begin(32000, p);
+    e.power(true, /*atSpeed*/ true);
+    renderSecs(e, 0.01f, 32000);
+    CHECK(e.state() == DriveState::Ready);
+    e.seekTo(0);
+    renderSecs(e, 0.5f, 32000);
+    e.seekTo(1);
+    renderSecs(e, 0.5f, 32000);
+    const float full = e.lastSeekUs() / 1000.0f;
+    e.seekTo(0.333f);
+    renderSecs(e, 0.5f, 32000);
+    const float twoThirds = e.lastSeekUs() / 1000.0f;
+    e.seekTo(0.0f);
+    renderSecs(e, 0.5f, 32000);
+    e.seekTo(0.333f);
+    renderSecs(e, 0.5f, 32000);
+    const float third = e.lastSeekUs() / 1000.0f;
+    // A full stroke takes about fullStrokeMs plus the settle.
+    CHECK(full > p.fullStrokeMs * 0.9f && full < p.fullStrokeMs + 4 * p.trackMs);
+    // Full force then full braking: time grows with the square root of the distance.
+    CHECK(third < full * 0.75f && third > full * 0.5f);
+    CHECK(twoThirds < full && twoThirds > third);
+
+    // A stepper's seek is one step per cylinder.
+    drivePreset("stepper85", p);
+    p.stepRamp = 0;  // a steady step rate
+    e.begin(32000, p);
+    e.power(true, true);
+    renderSecs(e, 0.01f, 32000);
+    e.seekTo(0.5f);
+    renderSecs(e, 1.0f, 32000);
+    const float ms = e.lastSeekUs() / 1000.0f;
+    const float steps = 307;  // half of 615 cylinders
+    CHECK(ms > steps * p.stepMs * 0.95f && ms < steps * p.stepMs + 20);
+    CHECK_EQ(int(e.cylinder()), 307);
+}
+
+TEST(drive_workloads_seek_at_a_real_pace_and_flood_merges) {
+    DriveParams p;
+    drivePreset("fdb05", p);
+    static DriveEngine e;
+    e.begin(32000, p);
+    e.power(true, true);
+    renderSecs(e, 0.01f, 32000);
+    e.setWorkload(DriveWorkload::Random);
+    uint32_t s0 = e.seekCount();
+    const float peak = renderSecs(e, 3, 32000);
+    const float rate = (e.seekCount() - s0) / 3.0f;
+    // Each random access: a seek (~10 ms), half a turn of latency (4 ms at 7200 rpm).
+    CHECK(rate > 40 && rate < 100);
+    CHECK(peak < 1.0f);
+    CHECK(e.busy());
+    // At emulator pace a new target arrives every 2 ms, but the head only finishes what it can.
+    e.setFlood(true);
+    s0 = e.seekCount();
+    renderSecs(e, 2, 32000);
+    CHECK((e.seekCount() - s0) / 2.0f < 150);
+    e.setFlood(false);
+    e.setWorkload(DriveWorkload::Idle);
+    renderSecs(e, 0.2f, 32000);
+    CHECK(!e.busy());
+}
+
+TEST(drive_balance_and_idle_sound) {
+    DriveParams p;
+    static DriveEngine e;
+    e.begin(32000, p);
+    e.power(true, true);
+    renderSecs(e, 0.5f, 32000);
+    double idleOn = 0, idleOff = 0, seeksOff = 0;
+    renderSecs(e, 0.5f, 32000, &idleOn);
+    e.setBalance(0.5f, /*idleSound*/ false);  // PLAY_IDLE off: the running sound goes silent
+    renderSecs(e, 0.05f, 32000);
+    renderSecs(e, 0.5f, 32000, &idleOff);
+    CHECK(idleOn > 0);
+    CHECK(idleOff < idleOn * 1e-6);
+    e.setBalance(0.0f, true);  // balance 0: only the running sound, no seeks
+    e.setWorkload(DriveWorkload::Random);
+    renderSecs(e, 0.05f, 32000);
+    double withSeeks = 0;
+    renderSecs(e, 1, 32000, &withSeeks);
+    CHECK(withSeeks < idleOn * 3);  // the seeks (much louder) are muted
+    e.setBalance(1.0f, true);  // balance 1: only the seeks
+    e.setWorkload(DriveWorkload::Idle);
+    renderSecs(e, 0.3f, 32000);
+    renderSecs(e, 0.5f, 32000, &seeksOff);
+    CHECK(seeksOff < idleOn * 0.01);
+}
+
+TEST(drive_params_update_and_actuator_switch) {
+    DriveParams p;
+    static DriveEngine e;
+    e.begin(32000, p);
+    e.power(true, true);
+    renderSecs(e, 0.01f, 32000);
+    e.seekTo(0.5f);
+    renderSecs(e, 0.3f, 32000);
+    p.actuator = Actuator::Stepper;
+    p.cylinders = 615;
+    CHECK(e.updateParams(p));
+    CHECK(!e.updateParams(p));  // the first is still pending until the next block
+    renderSecs(e, 0.01f, 32000);
+    CHECK(e.updateParams(p));
+    CHECK_EQ(int(e.cylinder()), 307);  // the head stays where it was
+    renderSecs(e, 0.01f, 32000);
+}
+
+TEST(drive_renders_as_a_mixer_voice) {
+    DriveParams p;
+    static DriveEngine e;
+    e.begin(32000, p);
+    e.power(true, true);
+    Voice v[1];
+    v[0].drive = &e;
+    v[0].targetLevel.store(LEVEL_UNITY / 2);
+    v[0].playGen.fetch_add(1);
+    v[0].state.store(VS_PLAYING);
+    int16_t out[128];
+    int peak = 0;
+    for (int b = 0; b < 200; ++b) {
+        mixBlock(v, 1, out, 128);
+        for (int16_t s : out) peak = std::max(peak, std::abs(int(s)));
+    }
+    CHECK(peak > 50);   // the spindle is audible
+    CHECK(peak < 16384);  // at half level, under half scale
+    CHECK_EQ(int(v[0].state.load()), int(VS_PLAYING));  // never ends by itself
+}
+
+TEST(drive_two_threads_commands_while_rendering) {
+    // Core 0 sends commands and parameters while core 1 renders (run under TSan).
+    DriveParams p;
+    static DriveEngine e;
+    e.begin(32000, p);
+    std::atomic<bool> done{false};
+    std::thread core0([&] {
+        DriveParams q = p;
+        for (int i = 0; i < 400; ++i) {
+            e.power(i % 50 != 49, i % 3 == 0);
+            e.setWorkload(static_cast<DriveWorkload>(i % 5));
+            e.setBalance((i % 10) / 10.0f, true);
+            e.seekTo((i % 7) / 7.0f);
+            q.rpm = 3600 + (i % 4) * 1200;
+            e.updateParams(q);
+            (void)e.state();
+            (void)e.rpm();
+            std::this_thread::yield();
+        }
+        done = true;
+    });
+    float buf[128];
+    bool finite = true;
+    while (!done) {
+        e.renderFloat(buf, 128);
+        for (float y : buf) finite = finite && std::isfinite(y);
+    }
+    core0.join();
+    CHECK(finite);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -1313,6 +1550,14 @@ int main(int argc, char** argv) {
     RUN(host_commands);
     RUN(host_commands_rejected);
     RUN(host_sanitise_name);
+    RUN(drive_presets_and_param_keys);
+    RUN(drive_spins_up_calibrates_and_spins_down);
+    RUN(drive_seek_times_follow_bang_bang_physics);
+    RUN(drive_workloads_seek_at_a_real_pace_and_flood_merges);
+    RUN(drive_balance_and_idle_sound);
+    RUN(drive_params_update_and_actuator_switch);
+    RUN(drive_renders_as_a_mixer_voice);
+    RUN(drive_two_threads_commands_while_rendering);
     std::printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

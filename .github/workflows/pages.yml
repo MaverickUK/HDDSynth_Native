@@ -1,0 +1,52 @@
+# Publishes the Drive Lab (tools/drive-lab, the modelled drive's browser
+# prototype) to GitHub Pages: https://maverickuk.github.io/HDDSynth_Native/drive-lab/
+# Runs on pushes to main that change it, or by hand from the Actions tab.
+name: Drive Lab website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/drive-lab/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the site
+        run: |
+          python3 tools/drive-lab/build.py --site _site/drive-lab
+          # The site's root, for now, just points at the Drive Lab.
+          cat > _site/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>HDD Synth</title>
+          <meta http-equiv="refresh" content="0; url=drive-lab/">
+          <link rel="canonical" href="drive-lab/">
+          <a href="drive-lab/">HDD Synth Drive Lab</a>
+          HTML
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}drive-lab/
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

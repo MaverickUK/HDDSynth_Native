@@ -18,6 +18,9 @@ and has feature parity with the CircuitPython firmware, plus a few extras.
   power-loss log on the SD card, and recovery from SD card removal without
   a reboot.
 - OLED display support
+- Modelled drives: a pack can be a physics model of a drive instead of
+  recordings (`drive.json`), synthesised live (see
+  [Modelled drives](#modelled-drives-drivejson)).
 
 ## Architecture
 
@@ -52,6 +55,7 @@ or re-initialises the card.
 | Jingle | SD, streamed through the one-shot buffer | First boot, before the spinup |
 | Spindown | **RAM**, the whole file, if it fits; otherwise SD through the one-shot buffer | When the pack loads (boot or pack change); the previous pack's copy is freed first |
 | Beeps | Neither: the audio core synthesises each sample as it plays | n/a |
+| Modelled drive | Neither: the audio core synthesises it (`drive.json` packs) | Its engine (2.9 KB) is allocated when the pack loads, and freed when it unloads |
 
 **Why the spindown is in RAM:** it plays while the power is failing,
 running off the supercap. From RAM it starts instantly and needs nothing
@@ -61,21 +65,24 @@ streaming them keeps RAM free for the spindown.
 
 **When it fits:** the spindown is loaded only if at least 32 KB of memory
 is still free afterwards (`HEAP_RESERVE_BYTES`, a margin for everything
-else). About 398 KB is free before it loads, so the largest spindown that
-fits is about 366 KB. How long that is depends on the pack's sample rate
+else). About 391 KB is free before it loads, so the largest spindown that
+fits is about 359 KB. How long that is depends on the pack's sample rate
 (mono 16-bit is 2 bytes per sample):
 
 | Pack sample rate | Data per second | Longest spindown in RAM | Stream buffer cover |
 |---|---|---|---|
-| 16 kHz | 32 KB | ~11.4 s | ~1.0 s |
-| 22.05 kHz | 44 KB | ~8.3 s | ~0.74 s |
-| 32 kHz | 64 KB | ~5.7 s | ~0.51 s |
+| 16 kHz | 32 KB | ~11.2 s | ~1.0 s |
+| 22.05 kHz | 44 KB | ~8.1 s | ~0.74 s |
+| 32 kHz | 64 KB | ~5.6 s | ~0.51 s |
 | 44.1 kHz | 88 KB | ~4.1 s | ~0.37 s |
-| 48 kHz | 96 KB | ~3.8 s | ~0.34 s |
+| 48 kHz | 96 KB | ~3.7 s | ~0.34 s |
 
 ("Stream buffer cover" is how long each streamed sound can ride out a
 slow SD read.) Every current pack is 16 kHz and fits; the largest,
-`PB_MicroScience612` (11.0 s), leaves 13 KB to spare. The boot log says which happened:
+`PB_MicroScience612` (11.0 s), leaves about 6 KB to spare (13 KB before
+the modelled drive's code moved into RAM, v0.20.0). With
+`EXPERIMENTAL_HDDSYNTHPRO_SUPPORT` on, `sequential.wav`'s 32 KB buffer means
+it streams instead. The boot log says which happened:
 `spindown in RAM (… ms)` or `spindown will stream from SD`.
 
 **If it doesn't fit:** once running, the one-shot buffer is kept
@@ -87,7 +94,7 @@ affected. `pio run -e mk5_stream_test` builds a variant that always
 streams the spindown, to test this path.
 
 **Memory overall:** the three 32 KB buffers (96 KB) and the rest of the
-firmware permanently use about 118 KB of the 512 KB, leaving the ~398 KB
+firmware permanently use about 125 KB of the 512 KB, leaving the ~391 KB
 the spindown draws from. Features that add RAM shrink the space for big
 spindowns.
 
@@ -102,6 +109,7 @@ spindowns.
 /samples/<pack>/spindown.wav
 /samples/<pack>/pack.json optional, see below
 /samples/<pack>/sequential.wav  optional, see HDDSynthPro activity link
+/samples/<pack>/drive.json      a modelled drive instead of the WAVs, see below
 /powerlog.bin             created by the firmware (power-loss log)
 /state.bin                created by the firmware (saved volume/balance)
 ```
@@ -145,6 +153,68 @@ is optional:
 | `GAIN` | `1.0` | Loudness trim for this pack's sounds (spinup, idle, access, spindown), 0.0 to 2.0, to even out packs recorded at different levels. Doesn't affect beeps or the jingle. |
 | `ACTIVITY_LED_COLOUR` | settings.json's | This pack's activity LED colour (`"#RRGGBB"` or `[r, g, b]`). Demo mode's random colour still wins. |
 | `BALANCE_DEFAULT` | settings.json's / 0.5 | This pack's starting balance, since packs differ in how loud idle is against access. A `BALANCE_DEFAULT` in settings.json overrides it, and so does a saved balance at boot (`SAVE_VOLUME_BALANCE`). On a pack change, the new pack's value applies. |
+
+### Modelled drives (drive.json)
+
+A pack can be a **model of a drive** instead of recordings: put a
+`drive.json` in its folder (the WAVs are then ignored, and can be left
+out). The firmware synthesises the drive live on the audio core:
+
+- **The spindle** spins up and coasts down with real dynamics: rotation hum
+  at rpm/60 Hz, the motor's whine at rpm/60 × slots (loudest while it
+  works hard, so the spin-up rises then settles), bearing noise and the air
+  dragged round by the platters.
+- **A virtual head** seeks with real actuator physics. A voice coil
+  accelerates at full force and brakes at full force (bang-bang), so short
+  seeks tick and long ones clunk, and each force change rings the arm and
+  case. A stepper clicks once per cylinder. Power-on unparks and calibrates;
+  power-off parks (with the latch's clack) and coasts down.
+- **HDD activity** sets a virtual workload: random access, or a file copy
+  (sequential, with trips to the FAT). The head's pace is a real drive's:
+  each random access waits for the seek and for the sector to come round.
+  A plain HDD LED can't say which kind of access it is, so activity that
+  stays on for 1.5 s counts as a file copy; with the HDDSynthPro link or
+  the companion app, their own class decides.
+
+Volume, the pack's `GAIN`, `PLAY_SPINUP`, `PLAY_IDLE`, `PLAY_SPINDOWN`,
+standby and demo mode all work as with recorded packs. **Balance** mixes the
+running sound (spindle, bearing, air) against the seeks (actuator, servo);
+at 0.5 both are at full level.
+
+The easiest way to make one is the **Drive Lab**, online at
+<https://maverickuk.github.io/HDDSynth_Native/drive-lab/> (source in
+[`tools/drive-lab`](tools/drive-lab)): tune the drive by ear, with a real
+pack's WAV alongside to compare, and download its `drive.json`.
+The smallest drive.json names a built-in preset:
+
+```json
+{ "format": "hddsynth-drive", "version": 1, "name": "1997 voice coil",
+  "preset": "voice97", "sampleRate": 32000, "params": { "rpm": 5400 } }
+```
+
+| Key | Default | What it does |
+|---|---|---|
+| `preset` | `voice97` | Starting parameters: `stepper85` (1985, 5.25″ MFM stepper, 3600 rpm), `voice91` (1991, 3.5″ voice coil, 3600 rpm, landing zone), `voice97` (1997, 5400 rpm, thermal recalibration) or `fdb05` (2005, 7200 rpm, fluid bearing, ramp load). |
+| `sampleRate` | `32000` | The output rate while the pack plays: 16000, 22050, 32000, 44100 or 48000. The engine takes about a quarter of the audio core at 32 kHz. |
+| `name` | *(none)* | Logged at load (`pack.json`'s `NAME` still names the pack). |
+| `params` | *(none)* | Any of the parameters below, overriding the preset's. Unknown keys and bad values are logged and skipped. |
+
+The parameters (numbers are clamped to their range):
+
+| Group | Parameters |
+|---|---|
+| Spindle | `rpm` (1800-15000), `spinupS` (1-20 s), `coastS` (2-30 s, the coast-down and so the spindown's length), `slots` (6-18), `polePairs` (2-8), `whine`, `hum`, `imbalance` (0-1) |
+| Platters and air | `platters` (1-10), `size` (`"5.25"`, `"3.5"`, `"2.5"`), `windage` (0-1), `zoned` (true: LBA 0 at the outer edge, with more sectors per track there) |
+| Bearing | `bearing` (`"ball"`, `"fdb"`), `wear`, `bearingLvl` (0-1) |
+| Actuator | `actuator` (`"voice"`, `"stepper"`), `cylinders` (300-100000), `tick` (0-1, the track-to-track tick); voice coil: `fullStrokeMs` (8-60), `trackMs` (0.5-8), `settleDamp` (0.1-1.2), `buzz` (0-1); stepper: `stepMs` (0.2-6), `stepRamp` (0-1, buffered seeks) |
+| Resonance | `armHz` (200-4000), `armRingMs` (5-200), `caseHz` (80-1200), `caseRingMs` (10-400), `hardness` (0-1) |
+| Head events | `park` (`"ramp"`, `"zone"`, `"none"`), `calSeeks` (0-8), `recalS` (0-120 s, 0 off), `wedges` (0-400 servo wedges), `servo` (0-1) |
+| Enclosure | `mount` (`"bare"`, `"case"`, `"sled"`), `bright` (-1 to 1), `caseRes` (0-1) |
+| Mixer | `gSpindle`, `gBearing`, `gWind`, `gAct`, `gServo` (0-1.5, per layer), `master` (0-1.5) |
+
+The spindown on a power cut is the coast-down: `coastS` long, entirely
+from RAM, like a recorded spindown in RAM. The serial `t` stress test
+exercises SD streaming, so it isn't available with a modelled pack.
 
 ### settings.json
 
@@ -429,6 +499,11 @@ Covers:
 - Two-thread producer/consumer tests that mirror core 0 and core 1.
 - Beep synthesis, encoder decoding, button timing, the saved-state and
   power-log formats, and the jingle light show's level follower.
+- The modelled drive: spin-up and coast-down times, seek physics, the
+  workloads' pace, balance, parameter updates and the two-core handover.
+  With node installed, it also renders the same scenario on the firmware's
+  engine and the browser prototype's (`tools/drive-lab/compare.js`) and
+  checks that they agree.
 
 GitHub Actions runs them on every push.
 

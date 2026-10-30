@@ -26,6 +26,8 @@
 
 using SampleRing = SpscRing<int16_t, cfg::RING_SAMPLES>;
 
+class DriveEngine;  // drive_engine.h
+
 enum VoiceState : uint8_t { VS_IDLE = 0, VS_PLAYING = 1, VS_STOP_REQ = 2 };
 
 constexpr uint16_t LEVEL_UNITY = 32768;  // Q15 gain of 1.0
@@ -42,6 +44,7 @@ struct Voice {
     uint32_t memLen = 0;
     SampleRing* ring = nullptr;             // stream mode source
     const BeepPattern* beep = nullptr;      // beep mode: synthesised here (takes priority)
+    DriveEngine* drive = nullptr;           // modelled drive: rendered here, never ends
     bool loop = false;                      // memory mode only; streams loop in the producer
 
     // --- owned by core 1 ---

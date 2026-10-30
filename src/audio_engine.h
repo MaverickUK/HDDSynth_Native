@@ -13,6 +13,7 @@ enum VoiceId : uint8_t {
     VOICE_SPINDOWN,     // memory if it fits in RAM, otherwise stream
     VOICE_BEEP,         // memory
     VOICE_SEQUENTIAL,   // stream, looping (sequential.wav, with EXPERIMENTAL_HDDSYNTHPRO_SUPPORT)
+    VOICE_DRIVE,        // the modelled drive (a pack with drive.json): synthesised, never ends
     VOICE_COUNT
 };
 
@@ -27,6 +28,10 @@ void core1Loop();
 bool startMemory(VoiceId id, const int16_t* data, uint32_t samples, bool loop, uint16_t level);
 // Start a voice reading from a ring the caller has already primed.
 bool startStream(VoiceId id, SampleRing* ring, uint16_t level);
+// Start the modelled drive's voice. Call `engine->begin()` before, while
+// the voice is idle; from then on, control the engine through its own
+// methods. The engine must stay valid until the voice is idle.
+bool startDrive(VoiceId id, DriveEngine* engine, uint16_t level);
 // Start a synthesised beep. `pattern` must stay valid until the voice is idle.
 bool startBeep(VoiceId id, const BeepPattern* pattern, uint16_t level);
 // Ask core 1 to stop a voice and wait (bounded) until it has. Returns false on timeout.

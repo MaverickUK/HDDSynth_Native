@@ -11,6 +11,7 @@
 #include <hardware/clocks.h>
 
 #include <initializer_list>
+#include <new>
 
 #include "audio_engine.h"
 #include "beeps.h"
@@ -18,6 +19,9 @@
 #include "config.h"
 #include "console.h"
 #include "controls.h"
+#include "drive_engine.h"
+#include "drive_pack.h"
+#include "drive_workload.h"
 #include "hdd_link.h"
 #include "host_protocol.h"
 #include "io.h"
@@ -98,6 +102,16 @@ sd::Stream streamSpinup, streamIdle, streamAccess, streamSpindown, streamSequent
 bool haveSequential = false;  // the loaded pack has a usable sequential.wav (else access.wav covers it)
 AccessChooser accessChooser;  // access.wav or sequential.wav, from the link's activity class
 bool ledSequential = false;   // the activity LED shows the sequential colour
+
+// A modelled pack (drive.json): the drive engine synthesises its sound on
+// core 1, in place of the WAVs, through VOICE_DRIVE.
+DriveEngine* driveEngine = nullptr;  // allocated only while a modelled pack is loaded
+bool modelled = false;
+DrivePack drivePack;
+WorkloadChooser workloadChooser;
+DriveWorkload driveWorkload = DriveWorkload::Idle;
+float driveBalance = -1;     // what the engine was last told (-1: nothing yet)
+bool driveIdleSound = true;
 
 int16_t* spindownRam = nullptr;
 uint32_t spindownSamples = 0;
@@ -180,6 +194,41 @@ uint16_t idleLevel() { return settings.playIdle ? baseLevel() : 0; }
 uint16_t accessLevel(bool active) {
     return active ? levelFromFloat(settings.volume * settings.balance * packInfo.gain) : 0;
 }
+// A modelled drive plays at volume x gain; the engine applies the balance
+// itself (running sound against seeks).
+uint16_t driveLevel() { return levelFromFloat(settings.volume * packInfo.gain); }
+
+// Keep the engine's balance and PLAY_IDLE in step with the settings.
+void syncDriveBalance() {
+    if (settings.balance == driveBalance && settings.playIdle == driveIdleSound) return;
+    if (driveEngine->setBalance(settings.balance, settings.playIdle)) {
+        driveBalance = settings.balance;
+        driveIdleSound = settings.playIdle;
+    }
+}
+
+// Start the drive's voice if it isn't playing, and power the drive on.
+// `atSpeed` skips the spin-up (a pack change while running).
+void startDrive(bool atSpeed) {
+    if (!audio::isPlaying(VOICE_DRIVE)) audio::startDrive(VOICE_DRIVE, driveEngine, driveLevel());
+    driveBalance = -1;
+    syncDriveBalance();
+    driveWorkload = DriveWorkload::Idle;
+    driveEngine->setWorkload(driveWorkload);
+    driveEngine->power(true, atSpeed);
+}
+
+// Is a spindown still playing: the spindown voice, or the drive coasting down?
+bool spindownPlaying() {
+    if (modelled) return audio::isPlaying(VOICE_DRIVE) && !driveEngine->stopped();
+    return audio::isPlaying(VOICE_SPINDOWN);
+}
+
+// Keep the spindown at the current volume.
+void setSpindownLevel() {
+    if (modelled) audio::setLevel(VOICE_DRIVE, driveLevel());
+    else audio::setLevel(VOICE_SPINDOWN, baseLevel());
+}
 
 // Beep and wait (amp on), calling feedWatchdog() meanwhile. Leaves the amp on.
 void beepAndWait(beeps::Type t) {
@@ -192,7 +241,7 @@ void beepAndWait(beeps::Type t) {
 // (_halt_on_boot_error() in the CircuitPython firmware).
 void halt(const char* why, beeps::Type error) {
     Console.printf("[fatal] %s\n", why);
-    for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SEQUENTIAL, VOICE_SPINDOWN}) audio::stop(id);
+    for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SEQUENTIAL, VOICE_SPINDOWN, VOICE_DRIVE}) audio::stop(id);
     beepAndWait(error);
     io::ampOff();
     haltBeep = error;
@@ -257,6 +306,10 @@ bool armSpindown() {
 }
 
 bool startSpindownVoice() {
+    if (modelled) {  // the drive powers off: it parks its heads and coasts down
+        if (!audio::isPlaying(VOICE_DRIVE)) return false;
+        return driveEngine->power(false);
+    }
     const uint16_t level = baseLevel();
     if (spindownRam) return audio::startMemory(VOICE_SPINDOWN, spindownRam, spindownSamples, false, level);
     if (!spindownArmed && !armSpindown()) return false;
@@ -266,6 +319,7 @@ bool startSpindownVoice() {
 
 // Fill the looping voices' rings, ready for enterRun().
 void primeLoops() {
+    if (modelled) return;  // nothing streams
     if (settings.playIdle) sd::prime(streamIdle);
     sd::prime(streamAccess);
     if (haveSequential) sd::prime(streamSequential);
@@ -293,10 +347,18 @@ void printStats() {
     Console.printf("[stats] t=%lus state=%s heap=%d mix_max=%luus i2s_underflow=%d",
                   static_cast<unsigned long>(millis() / 1000), stateName(state), rp2040.getFreeHeap(),
                   static_cast<unsigned long>(audio::maxMixMicros()), audio::i2sUnderflowed());
-    printVoice("idle", VOICE_IDLE);
-    printVoice("access", VOICE_ACCESS);
-    if (haveSequential) printVoice("sequential", VOICE_SEQUENTIAL);
-    printVoice("spindown", VOICE_SPINDOWN);
+    if (modelled) {
+        static const char* const states[] = {"off", "spinup", "calibrate", "ready"};
+        Console.printf(" | drive: %s %lurpm cyl=%lu seeks=%lu last_seek=%luus",
+                       states[static_cast<int>(driveEngine->state())], static_cast<unsigned long>(driveEngine->rpm()),
+                       static_cast<unsigned long>(driveEngine->cylinder()), static_cast<unsigned long>(driveEngine->seekCount()),
+                       static_cast<unsigned long>(driveEngine->lastSeekUs()));
+    } else {
+        printVoice("idle", VOICE_IDLE);
+        printVoice("access", VOICE_ACCESS);
+        if (haveSequential) printVoice("sequential", VOICE_SEQUENTIAL);
+        printVoice("spindown", VOICE_SPINDOWN);
+    }
     Console.printf("\n[stats] sd: chunks=%lu read_err=%lu recoveries=%lu failed_rec=%lu rescued=%lu max_read=%luus"
                   " | stress: %s transitions=%lu failures=%lu | supercap=%dmV flt=%d\n",
                   static_cast<unsigned long>(st.chunksRead), static_cast<unsigned long>(st.readErrors),
@@ -473,6 +535,8 @@ void handleSerial() {
             case 't':
                 if (state != State::Run) {
                     Console.println("[stress] only available in RUN");
+                } else if (modelled) {
+                    Console.println("[stress] tests SD streaming: not with a modelled pack (drive.json)");
                 } else if (stressOn) {
                     stopStress();
                     Console.println("[stress] off");
@@ -525,7 +589,7 @@ void handleSerial() {
                 break;
             }
             case 'j':  // replay the jingle: clear its flag and reboot
-                for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SEQUENTIAL, VOICE_SPINDOWN}) audio::stop(id);
+                for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SEQUENTIAL, VOICE_SPINDOWN, VOICE_DRIVE}) audio::stop(id);
                 io::ampOff();  // audio stopped: safe to write flash
                 persist::state().jinglePlayed = false;
                 persist::commit();
@@ -615,12 +679,54 @@ void loadPackInfo() {
     }
 }
 
+// A pack with drive.json is modelled: the engine plays it, and its WAVs (if
+// any) are ignored. Returns false if there is no drive.json; `ok` false if
+// there is one but it's unusable.
+bool loadDrivePack(bool& ok) {
+    char p[128];
+    samplePath(p, sizeof(p), "drive.json");
+    if (!sd::fileExists(p)) return false;
+    // On the heap only while loading: RAM is tight (CLAUDE.md, RAM budget).
+    constexpr size_t JSON_MAX = 3072;
+    char* json = static_cast<char*>(malloc(JSON_MAX));
+    size_t len = 0;
+    const char* why = json ? "too big or unreadable" : "out of memory";
+    ok = json && sd::readTextFile(p, json, JSON_MAX, len) && parseDriveJson(json, drivePack, why);
+    free(json);
+    if (!ok) {
+        Console.printf("[pack] %s: drive.json is unusable (%s)\n", pack, why);
+        return true;
+    }
+    if (!driveEngine) driveEngine = new (std::nothrow) DriveEngine;
+    if (!driveEngine) {
+        Console.printf("[pack] %s: no RAM for the drive engine\n", pack);
+        ok = false;
+        return true;
+    }
+    modelled = true;
+    packRate = drivePack.sampleRate;
+    audio::setSampleRate(packRate);  // nothing is playing
+    driveEngine->begin(packRate, drivePack.params);
+    io::setSequentialSpells(true);
+    Console.printf("[pack] modelled drive%s%s: %d rpm, %s, %lu Hz\n", drivePack.name[0] ? " " : "", drivePack.name,
+                   static_cast<int>(drivePack.params.rpm),
+                   drivePack.params.actuator == Actuator::Stepper ? "stepper" : "voice coil",
+                   static_cast<unsigned long>(packRate));
+    if (drivePack.unknownKeys || drivePack.badValues) {
+        Console.printf("[pack] drive.json: %d unknown key(s), %d bad value(s) ignored\n", drivePack.unknownKeys,
+                       drivePack.badValues);
+    }
+    return true;
+}
+
 bool loadPack() {
     Console.printf("[pack] %s\n", pack);
     packNumber = sd::packIndex(pack);
     char first[64];
     if (!sd::packByIndex(0, first, sizeof(first), packCount)) packCount = 0;
     loadPackInfo();
+    bool driveOk = false;
+    if (loadDrivePack(driveOk)) return driveOk;
     if (!checkPackRate()) return false;
     // Nothing is playing at this point (boot, pack change, demo hand-over).
     audio::setSampleRate(packRate);
@@ -651,6 +757,10 @@ bool loadPack() {
 
 // Close the pack's streams and free its spindown. The voices must be stopped.
 void unloadPack() {
+    modelled = false;  // VOICE_DRIVE is stopped, so core 1 no longer reads the engine
+    delete driveEngine;
+    driveEngine = nullptr;
+    io::setSequentialSpells(false);
     sd::closeStream(streamIdle);
     sd::closeStream(streamAccess);
     sd::closeStream(streamSequential);
@@ -662,9 +772,11 @@ void unloadPack() {
     spindownArmed = false;
 }
 
-void stopPackVoices() {
+// `keepDrive`: leave a modelled drive running, for its spindown to follow.
+void stopPackVoices(bool keepDrive = false) {
     stopStress();
     for (VoiceId id : {VOICE_IDLE, VOICE_ACCESS, VOICE_SEQUENTIAL, VOICE_SPINDOWN}) audio::stop(id);
+    if (!keepDrive) audio::stop(VOICE_DRIVE);
     io::rgbOff();
     io::hddLed(false);
     lastAccess = false;
@@ -720,7 +832,7 @@ void enterStandby(bool forced) {
     if (forced) Console.println("[standby] spinning down (serial z)");
     else Console.printf("[standby] no activity for %lu min, spinning down\n",
                         static_cast<unsigned long>(settings.standbyMinutes));
-    stopPackVoices();
+    stopPackVoices(/*keepDrive*/ settings.playSpindown);
     if (settings.playSpindown) startSpindownVoice();
     state = State::StandbySpindown;
 }
@@ -733,7 +845,7 @@ void wakeFromStandby() {
 
 void enterDemoSpindown() {
     Console.println("[demo] spinning down");
-    stopPackVoices();
+    stopPackVoices(/*keepDrive*/ settings.playSpindown);
     if (settings.playSpindown) startSpindownVoice();
     state = State::DemoSpindown;
 }
@@ -962,6 +1074,13 @@ void finishJingle() {
 }
 
 void startSpinup() {
+    if (modelled) {
+        // Without PLAY_SPINUP the drive starts at speed, as the WAV packs skip spinup.wav.
+        startDrive(/*atSpeed*/ !settings.playSpinup);
+        Console.println(settings.playSpinup ? "[boot] spinup (modelled)" : "[boot] modelled drive at speed");
+        state = State::Spinup;
+        return;
+    }
     char p[128];
     samplePath(p, sizeof(p), "spinup.wav");
     if (settings.playSpinup && sd::openStream(streamSpinup, p, VOICE_SPINUP, &ringOneShot, false) &&
@@ -976,6 +1095,16 @@ void startSpinup() {
 
 void enterRun() {
     sd::closeStream(streamSpinup);
+    if (modelled) {
+        if (!audio::isPlaying(VOICE_DRIVE)) startDrive(/*atSpeed*/ true);  // a pack change: no spin-up
+        Console.println("[run] modelled drive");
+        audio::i2sUnderflowed();
+        nextStatsMs = millis() + 5000;
+        demoEndsMs = millis() + cfg::DEMO_PACK_MS;
+        lastActivityMs = millis();
+        state = State::Run;
+        return;
+    }
     if (!spindownRam) armSpindown();
     if (settings.playIdle) audio::startStream(VOICE_IDLE, &ringIdle, idleLevel());
     audio::startStream(VOICE_ACCESS, &ringAccess, 0);
@@ -1003,12 +1132,14 @@ void enterSpindown() {
     sd::closeStream(streamSpinup);  // frees the one-shot ring for a streamed spindown
     io::rgbOff();
     io::hddLed(false);
-    if ((state == State::DemoSpindown || state == State::StandbySpindown) && audio::isPlaying(VOICE_SPINDOWN)) {
+    if ((state == State::DemoSpindown || state == State::StandbySpindown) && spindownPlaying()) {
         powerlog::logf("[power] spindown already playing, letting it finish");
     } else if (state == State::Standby) {
         powerlog::logf("[power] in standby: already spun down");
     } else if (settings.playSpindown && startSpindownVoice()) {
-        powerlog::logf("[power] spindown");
+        powerlog::logf(modelled ? "[power] spindown (modelled)" : "[power] spindown");
+    } else {
+        audio::stop(VOICE_DRIVE);  // no spindown: a modelled drive just goes quiet
     }
     state = State::Spindown;
 }
@@ -1038,7 +1169,7 @@ void runStep() {
         accessJumpPending = true;
     }
     if (active) accessJumpPending = false;
-    if (!active && accessJumpPending && millis() - accessOffMs >= cfg::ACCESS_JUMP_QUIET_MS) {
+    if (!active && accessJumpPending && !modelled && millis() - accessOffMs >= cfg::ACCESS_JUMP_QUIET_MS) {
         accessJumpPending = false;
         jumpAccess();
     }
@@ -1056,6 +1187,14 @@ void runStep() {
             if (active) io::rgb(c[0], c[1], c[2]);
             else io::rgbOff();
         }
+    }
+    if (modelled) {
+        // The activity picks the drive's virtual workload; the engine makes the seeks.
+        const DriveWorkload w = workloadChooser.choose(active, io::activityClass(), io::activityClassKnown(), millis());
+        if (w != driveWorkload && driveEngine->setWorkload(w)) driveWorkload = w;
+        audio::setLevel(VOICE_DRIVE, driveLevel());
+        syncDriveBalance();
+        return;
     }
     audio::setLevel(VOICE_IDLE, idleLevel());
     audio::setLevel(VOICE_ACCESS, accessLevel(active && sample == AccessSample::Access));
@@ -1104,11 +1243,16 @@ void loop() {
             oled::service();
             savedlevels::service();
             controls::poll();  // pack changes wait for RUN; volume applies straight away
-            audio::setLevel(VOICE_SPINUP, baseLevel());
+            if (modelled) {
+                audio::setLevel(VOICE_DRIVE, driveLevel());
+                syncDriveBalance();
+            } else {
+                audio::setLevel(VOICE_SPINUP, baseLevel());
+            }
             beeps::service();
             powerTrace("spinup");
             if (power::lost()) enterSpindown();
-            else if (!audio::isPlaying(VOICE_SPINUP)) enterRun();
+            else if (modelled ? driveEngine->state() == DriveState::Ready : !audio::isPlaying(VOICE_SPINUP)) enterRun();
             break;
 
         case State::Run: {
@@ -1131,10 +1275,13 @@ void loop() {
             savedlevels::service();
             const controls::Action action = controls::poll();
             beeps::service();
-            audio::setLevel(VOICE_SPINDOWN, baseLevel());
+            setSpindownLevel();
             if (power::lost()) enterSpindown();
             else if (action == controls::Action::FactoryReset) factoryReset();
-            else if (!audio::isPlaying(VOICE_SPINDOWN)) nextDemoPack();
+            else if (!spindownPlaying()) {
+                audio::stop(VOICE_DRIVE);
+                nextDemoPack();
+            }
             break;
         }
 
@@ -1144,10 +1291,11 @@ void loop() {
             savedlevels::service();
             const controls::Action action = controls::poll();
             beeps::service();
-            audio::setLevel(VOICE_SPINDOWN, baseLevel());
+            setSpindownLevel();
             if (power::lost()) enterSpindown();
             else if (action == controls::Action::FactoryReset) factoryReset();
-            else if (!audio::isPlaying(VOICE_SPINDOWN)) {
+            else if (!spindownPlaying()) {
+                audio::stop(VOICE_DRIVE);
                 io::ampOff();
                 Console.println("[standby] spun down, waiting for activity");
                 state = State::Standby;
@@ -1170,7 +1318,8 @@ void loop() {
         case State::Spindown:
             sd::pump();
             powerTrace("spindown");
-            if (!audio::isPlaying(VOICE_SPINDOWN)) {
+            if (!spindownPlaying()) {
+                audio::stop(VOICE_DRIVE);
                 io::ampOff();
                 powerlog::logf("[power] spindown complete, supercap %d mV, longest core 0 stall %lu us",
                                power::supercapMillivolts(), static_cast<unsigned long>(maxLoopGapUs));

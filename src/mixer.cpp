@@ -2,11 +2,17 @@
 
 #include <string.h>
 
+#include "drive_engine.h"
+
 namespace {
 
 // Fill `dst` with up to `frames` samples from the voice's source.
 // Returns false when the source has finished (dst is zero padded).
 bool readSource(Voice& v, int16_t* dst, size_t frames) {
+    if (v.drive) {
+        v.drive->render(dst, frames);
+        return true;
+    }
     if (v.beep) {
         for (size_t n = 0; n < frames; ++n) dst[n] = beepSample(*v.beep, v.memPos + static_cast<uint32_t>(n));
         v.memPos += static_cast<uint32_t>(frames);

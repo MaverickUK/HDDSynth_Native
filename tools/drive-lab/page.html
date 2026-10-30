@@ -1,0 +1,819 @@
+<title>HDD Synth Drive Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a test bench. Left, the drive under test (top view, scope, spectrograms);
+   right, the designer: mixer first, then one card per part of the drive. */
+:root {
+  --bg: #E7EAED;
+  --panel: #F5F6F7;
+  --sunk: #DDE1E5;
+  --ink: #1A1E23;
+  --muted: #5A646E;
+  --line: #C9CFD5;
+  --accent: #C25F17;
+  --accent-ink: #FFFFFF;
+  --trace: #2B6B98;
+  --led-off: #7D6A5C;
+  --platter-a: #BFC5CB;
+  --platter-b: #F3F5F6;
+  --casting: #A3AAB1;
+  --casting-edge: #8A929A;
+  --label-bg: #F3F1EA;
+  --label-ink: #23272C;
+  --spec-lo: #F5F6F7;
+  --spec-mid: #2B6B98;
+  --spec-hi: #C25F17;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131619; --panel: #1B1F23; --sunk: #101315; --ink: #E3E7EA; --muted: #95A0AA; --line: #2C3238;
+    --accent: #EE8A3C; --accent-ink: #1A1206; --trace: #69A5D2; --led-off: #4A3C31;
+    --platter-a: #545B62; --platter-b: #A7AEB4; --casting: #3A4047; --casting-edge: #4B525A;
+    --label-bg: #2A2D2F; --label-ink: #E3E1DA;
+    --spec-lo: #1B1F23; --spec-mid: #3F86BC; --spec-hi: #F29A50;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131619; --panel: #1B1F23; --sunk: #101315; --ink: #E3E7EA; --muted: #95A0AA; --line: #2C3238;
+  --accent: #EE8A3C; --accent-ink: #1A1206; --trace: #69A5D2; --led-off: #4A3C31;
+  --platter-a: #545B62; --platter-b: #A7AEB4; --casting: #3A4047; --casting-edge: #4B525A;
+  --label-bg: #2A2D2F; --label-ink: #E3E1DA;
+  --spec-lo: #1B1F23; --spec-mid: #3F86BC; --spec-hi: #F29A50;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 40px;
+}
+.wrap { max-width: 1340px; margin: 0 auto; display: grid; gap: 18px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+.mono, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Header */
+.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 14px 24px; }
+.title h1 { font-size: 30px; font-weight: 700; letter-spacing: 0.01em; line-height: 1.05; }
+.title p { margin: 4px 0 0; color: var(--muted); max-width: 62ch; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.field-inline { display: flex; flex-direction: column; gap: 3px; }
+.eyebrow { font-family: var(--display); font-size: 11px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+select { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px; min-width: 0; }
+.power {
+  display: inline-flex; align-items: center; gap: 10px; padding: 9px 16px 9px 12px; border-radius: 4px;
+  border: 1px solid var(--ink); background: var(--ink); color: var(--bg); cursor: pointer;
+  font-family: var(--display); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; font-size: 13px;
+}
+.power .led { width: 10px; height: 10px; border-radius: 50%; background: var(--led-off); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25); }
+.power[aria-pressed="true"] .led { background: #4FCB5B; box-shadow: 0 0 8px #4FCB5B; }
+
+/* Main grid */
+.grid { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 960px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.bench { display: grid; gap: 14px; padding: 14px; }
+.stage { position: relative; }
+#platter { display: block; width: 100%; aspect-ratio: 4 / 3; max-width: 100%; border-radius: 4px; background: var(--sunk); cursor: crosshair; }
+.stage .hint { position: absolute; left: 10px; bottom: 8px; font-size: 12px; color: var(--muted); pointer-events: none; }
+
+/* The drive's top-cover label */
+.cover-label {
+  background: var(--label-bg); color: var(--label-ink); border: 1px solid var(--line); border-radius: 3px;
+  padding: 10px 12px; display: grid; gap: 6px;
+}
+.cover-label .model { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 14px; align-items: baseline; }
+.cover-label .model b { font-family: var(--display); font-size: 17px; letter-spacing: 0.04em; }
+.cover-label .model span { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.spec { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 2px 14px; font-family: var(--mono); font-size: 11.5px; }
+.spec div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px dotted var(--line); padding-block: 2px; }
+.spec dt, .spec dd { margin: 0; }
+.spec dt { color: var(--muted); }
+
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.seg button { border: 0; border-right: 1px solid var(--line); background: transparent; padding: 7px 11px; cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.toggle { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; cursor: pointer; }
+.toggle input { accent-color: var(--accent); }
+
+.readouts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 560px) { .readouts { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.readout { background: var(--sunk); border-radius: 4px; padding: 7px 9px; min-width: 0; }
+.readout .eyebrow { font-size: 10px; }
+.readout .num { font-size: 17px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.readout .num small { font-size: 11px; color: var(--muted); }
+
+.trace-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.legend { display: flex; gap: 12px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+canvas.strip { display: block; width: 100%; height: 110px; background: var(--sunk); border-radius: 4px; }
+.spectro { position: relative; }
+.spectro canvas { display: block; width: 100%; height: 120px; background: var(--sunk); border-radius: 4px; image-rendering: pixelated; }
+.spectro .axis { position: absolute; inset: 0 0 0 auto; width: 100%; pointer-events: none; }
+.spectro .axis span { position: absolute; right: 6px; font-family: var(--mono); font-size: 10px; color: var(--muted); transform: translateY(50%); }
+.ab { display: grid; gap: 8px; }
+.file { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px dashed var(--line); border-radius: 4px; cursor: pointer; color: var(--muted); }
+.file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+/* Designer */
+.designer { display: grid; gap: 14px; }
+.card { padding: 12px 14px 14px; display: grid; gap: 10px; }
+.card header { display: grid; gap: 2px; }
+.card h2 { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
+.card header p { margin: 0; color: var(--muted); font-size: 12.5px; max-width: 70ch; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 680px) { .cards { grid-template-columns: minmax(0, 1fr); } }
+.ctl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 10px; align-items: baseline; }
+.ctl label { font-size: 13px; }
+.ctl output { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+.ctl .derived { grid-column: 1 / -1; font-family: var(--mono); font-size: 11px; color: var(--muted); min-height: 0; }
+.ctl input[type="range"], .ctl select { grid-column: 1 / -1; width: 100%; }
+input[type="range"] { accent-color: var(--accent); margin: 2px 0 0; }
+.ctl.check { grid-template-columns: auto minmax(0, 1fr); align-items: center; }
+.ctl.check input { accent-color: var(--accent); margin: 0; }
+
+.mixer { display: grid; gap: 7px; }
+.ch { display: grid; grid-template-columns: 92px auto minmax(0, 1fr) 64px; gap: 8px; align-items: center; }
+@media (max-width: 420px) { .ch { grid-template-columns: 74px auto minmax(0, 1fr); } .ch .meter { grid-column: 1 / -1; } }
+.ch .name { font-size: 13px; }
+.ms { display: inline-flex; gap: 3px; }
+.ms button { width: 26px; height: 24px; border: 1px solid var(--line); background: transparent; border-radius: 3px; cursor: pointer; font-family: var(--display); font-weight: 600; font-size: 12px; }
+.ms button[aria-pressed="true"].m { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.ms button[aria-pressed="true"].s { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.meter { height: 8px; background: var(--sunk); border-radius: 2px; overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: var(--trace); transition: width 60ms linear; }
+.json textarea { width: 100%; min-height: 120px; font-family: var(--mono); font-size: 11.5px; background: var(--sunk); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 8px; resize: vertical; }
+.btn { border: 1px solid var(--line); background: var(--panel); padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.status { font-size: 12px; color: var(--muted); }
+.note { color: var(--muted); font-size: 12.5px; margin: 0; }
+.about { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px 28px; padding: 16px 14px; color: var(--muted); font-size: 13px; }
+.about h2 { font-size: 15px; color: var(--ink); margin-bottom: 4px; }
+.about p, .about ol { margin: 0; max-width: 62ch; }
+.about ol { padding-left: 18px; }
+.about a { color: var(--trace); }
+.about code { font-family: var(--mono); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .meter i { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="title">
+      <h1>HDD Synth Drive Lab</h1>
+      <p>A physically modelled hard drive. A virtual head seeks with real actuator physics, and the spindle, bearing, air and arm are synthesised live. Tune it the way you'd spec a drive.</p>
+    </div>
+    <div class="controls">
+      <div class="field-inline">
+        <label class="eyebrow" for="preset">Preset</label>
+        <select id="preset"></select>
+      </div>
+      <button class="power" id="power" aria-pressed="false"><span class="led"></span><span id="powerText">Power on</span></button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <section class="panel bench" aria-label="Drive under test">
+      <div class="cover-label" id="coverLabel">
+        <div class="model"><b id="modelName">HS-5400</b><span id="modelNote"></span></div>
+        <dl class="spec" id="spec"></dl>
+      </div>
+
+      <div class="stage">
+        <canvas id="platter" width="800" height="600" aria-label="Top view of the drive: click the platter to seek the head there"></canvas>
+        <span class="hint" id="hint">Power the drive on, then click a track to seek there.</span>
+      </div>
+
+      <div class="row">
+        <span class="eyebrow">Workload</span>
+        <div class="seg" id="workloads" role="group" aria-label="Workload">
+          <button data-w="idle" aria-pressed="true">Idle</button>
+          <button data-w="seq" aria-pressed="false">File copy</button>
+          <button data-w="random" aria-pressed="false">Random 4K</button>
+          <button data-w="boot" aria-pressed="false">DOS boot</button>
+          <button data-w="defrag" aria-pressed="false">Defrag</button>
+        </div>
+        <label class="toggle" title="HDDSynthPro answers from SD with no seek time: a new target every 2 ms, faster than any head can move."><input type="checkbox" id="flood"> Emulator pace</label>
+      </div>
+
+      <div class="readouts">
+        <div class="readout"><span class="eyebrow">Spindle</span><span class="num" id="roRpm">0 <small>rpm</small></span></div>
+        <div class="readout"><span class="eyebrow">State</span><span class="num" id="roState">Off</span></div>
+        <div class="readout"><span class="eyebrow">Cylinder</span><span class="num" id="roCyl">0</span></div>
+        <div class="readout"><span class="eyebrow">Last seek</span><span class="num" id="roSeek">–</span></div>
+        <div class="readout"><span class="eyebrow">Seeks/s</span><span class="num" id="roRate">0</span></div>
+      </div>
+
+      <div>
+        <div class="trace-head">
+          <span class="eyebrow">Head, last 2 s</span>
+          <span class="legend"><span><i style="background: var(--trace)"></i>position</span><span><i style="background: var(--accent)"></i>speed</span></span>
+        </div>
+        <canvas class="strip" id="scope" width="800" height="110"></canvas>
+      </div>
+
+      <div class="ab">
+        <div class="trace-head">
+          <span class="eyebrow">Spectrogram: synthesised</span>
+          <span class="legend">40 Hz to 16 kHz, log scale</span>
+        </div>
+        <div class="spectro"><canvas id="specA" width="600" height="120"></canvas><div class="axis" id="axisA"></div></div>
+        <div class="trace-head">
+          <span class="eyebrow">Spectrogram: reference recording</span>
+          <span class="status" id="refStatus">No recording loaded</span>
+        </div>
+        <div class="spectro"><canvas id="specB" width="600" height="120"></canvas><div class="axis" id="axisB"></div></div>
+        <div class="row">
+          <label class="file" for="refFile">Load a WAV from a sample pack…<input type="file" id="refFile" accept="audio/*,.wav"></label>
+          <div class="seg" id="abMode" role="group" aria-label="Listen to">
+            <button data-ab="synth" aria-pressed="true">Synth</button>
+            <button data-ab="ref" aria-pressed="false">Recording</button>
+            <button data-ab="both" aria-pressed="false">Both</button>
+          </div>
+        </div>
+        <p class="note">For a fair A/B, load the same moment from a real drive: <span class="mono">idle.wav</span> against Idle, <span class="mono">access.wav</span> against Random 4K. The recording loops.</p>
+      </div>
+    </section>
+
+    <section class="designer" aria-label="Drive designer">
+      <div class="panel card">
+        <header><h2>Mixer</h2><p>Each layer of the drive's sound, live. Mute or solo one to hear what it adds.</p></header>
+        <div class="mixer" id="mixer"></div>
+      </div>
+      <div class="cards" id="cards"></div>
+      <div class="panel card json">
+        <header><h2>drive.json</h2><p>These settings as JSON, the format a sample pack would carry for the firmware engine. Copy it out, or paste one in and apply it.</p></header>
+        <textarea id="json" spellcheck="false" aria-label="Drive settings as JSON"></textarea>
+        <div class="row">
+          <button class="btn" id="copyJson">Copy</button>
+          <button class="btn" id="downloadJson" hidden>Download drive.json</button>
+          <button class="btn primary" id="applyJson">Apply pasted JSON</button>
+          <span class="status" id="jsonStatus"></span>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <footer class="panel about">
+    <div>
+      <h2>What this is</h2>
+      <p>A design tool for the <a href="https://github.com/MaverickUK/HDDSynth">HDD Synth</a>, a small board that plays the sound of a mechanical hard drive in time with your PC's disk activity. Instead of recordings, a pack can be this model: the HDD Synth's firmware runs the same engine live, with the head moving to the drive's real physics.</p>
+    </div>
+    <div>
+      <h2>Put your drive on an HDD Synth</h2>
+      <ol>
+        <li>Save the settings as <code>drive.json</code> (above).</li>
+        <li>Put it in a new folder in <code>/samples</code> on the HDD Synth's SD card, for example <code>/samples/MyDrive/drive.json</code>.</li>
+        <li>Choose the pack with the action button. It needs firmware v0.20.0 or later.</li>
+      </ol>
+    </div>
+    <div>
+      <h2>Source</h2>
+      <p>Part of <a href="https://github.com/MaverickUK/HDDSynth_Native">HDDSynth Native</a>, the HDD Synth MK5 firmware (<code>tools/drive-lab</code>), licensed under the GPLv3. Recorded sample packs are in <a href="https://github.com/MaverickUK/HDDSynth_Samples">HDDSynth_Samples</a>, good for the A/B comparison. By Peter Bridger.</p>
+    </div>
+  </footer>
+</div>
+
+<script>
+/*ENGINE*/
+</script>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const GROUPS = {
+    spindle: ['Spindle motor', 'Rotation hum at rpm/60 Hz, and the motor\'s whine at rpm/60 × slots. The whine is loudest while the motor works hard, so spin-up rises and then settles.'],
+    platters: ['Platters and air', 'Air dragged round by the platters: louder with more, bigger and faster platters. Zoned recording puts LBA 0 at the outer edge with more sectors per track.'],
+    bearing: ['Bearing', 'Ball bearings hiss and whine, more with wear. Fluid bearings are much quieter.'],
+    actuator: ['Actuator', 'A voice coil accelerates and brakes the arm at full force (bang-bang), so short seeks tick and long ones clunk. A stepper clicks once per cylinder.'],
+    resonance: ['Arm and case resonance', 'Each force change on the arm rings these modes, which is most of what a seek sounds like.'],
+    heads: ['Head events', 'Unparking and calibration at power-on, parking at power-off, and the 90s drives\' periodic thermal recalibration. Servo wedges buzz faintly while transferring.'],
+    enclosure: ['Enclosure', 'The same drive sounds different bare on a desk and screwed into a case.'],
+  };
+  const LOG_KEYS = new Set(['cylinders']);
+  const LAYERS = [
+    { key: 'gSpindle', name: 'Spindle' }, { key: 'gBearing', name: 'Bearing' }, { key: 'gWind', name: 'Air' },
+    { key: 'gAct', name: 'Actuator' }, { key: 'gServo', name: 'Servo' },
+  ];
+  LAYERS.forEach((l) => { l.g = 1; l.m = false; l.s = false; });
+  let master = MIX_DEFAULTS.master;
+
+  let params = Object.assign({}, PRESETS[2].p);
+  let presetId = PRESETS[2].id;
+
+  // ---------- audio ----------
+  let ctx = null, send = null, synthGain = null, refGain = null, anA = null, anB = null, refSrc = null, refBuf = null;
+  let powered = false, abMode = 'synth', workload = 'idle';
+  let tel = null;
+  const HIST = 2000, hx = new Float32Array(HIST), hv = new Float32Array(HIST); let hpos = 0;
+  const seekLog = [];
+
+  function engineParams() {
+    const p = Object.assign({}, params);
+    const anySolo = LAYERS.some((l) => l.s);
+    LAYERS.forEach((l) => { p[l.key] = l.m || (anySolo && !l.s) ? 0 : l.g; });
+    p.master = master;
+    return p;
+  }
+  const pushParams = () => { if (send) send({ type: 'params', p: engineParams() }); };
+
+  const workletSource = () => makeEngine.toString() + `
+class DriveProcessor extends AudioWorkletProcessor {
+  constructor() { super(); this.e = makeEngine(sampleRate); this.n = 0; this.port.onmessage = (ev) => this.e.handle(ev.data); }
+  process(inputs, outputs) {
+    const out = outputs[0], o = out[0];
+    this.e.process(o, o.length);
+    for (let c = 1; c < out.length; c++) out[c].set(o);
+    this.n += o.length;
+    if (this.n >= sampleRate / 30) { this.n = 0; this.port.postMessage(this.e.telemetry()); }
+    return true;
+  }
+}
+registerProcessor('drive-processor', DriveProcessor);`;
+
+  async function startAudio() {
+    ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    let src;
+    try {
+      const url = URL.createObjectURL(new Blob([workletSource()], { type: 'application/javascript' }));
+      await ctx.audioWorklet.addModule(url);
+      const node = new AudioWorkletNode(ctx, 'drive-processor', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+      node.port.onmessage = (ev) => onTelemetry(ev.data);
+      send = (m) => node.port.postMessage(m);
+      src = node;
+    } catch (err) {
+      // Fallback: run the same engine on the main thread.
+      const engine = makeEngine(ctx.sampleRate);
+      const sp = ctx.createScriptProcessor(1024, 0, 2);
+      sp.onaudioprocess = (ev) => {
+        const L = ev.outputBuffer.getChannelData(0);
+        engine.process(L, L.length);
+        ev.outputBuffer.getChannelData(1).set(L);
+        onTelemetry(engine.telemetry());
+      };
+      send = (m) => engine.handle(m);
+      src = sp;
+    }
+    synthGain = ctx.createGain(); refGain = ctx.createGain();
+    anA = ctx.createAnalyser(); anB = ctx.createAnalyser();
+    [anA, anB].forEach((a) => { a.fftSize = 4096; a.smoothingTimeConstant = 0; });
+    src.connect(anA); anA.connect(synthGain); synthGain.connect(ctx.destination);
+    anB.connect(refGain); refGain.connect(ctx.destination);
+    pushParams();
+    send({ type: 'workload', name: workload });
+    send({ type: 'flood', on: $('#flood').checked });
+    applyAb();
+    if (refBuf) startRef();
+  }
+
+  function onTelemetry(t) {
+    tel = t;
+    const h = t.hist;
+    for (let i = 0; i + 1 < h.length; i += 2) { hx[hpos] = h[i]; hv[hpos] = h[i + 1]; hpos = (hpos + 1) % HIST; }
+    const now = performance.now();
+    seekLog.push([now, t.seekCount]);
+    while (seekLog.length && now - seekLog[0][0] > 1000) seekLog.shift();
+  }
+
+  $('#power').addEventListener('click', async () => {
+    if (!ctx) await startAudio();
+    if (ctx.state === 'suspended') await ctx.resume();
+    powered = !powered;
+    send({ type: 'power', on: powered });
+    $('#power').setAttribute('aria-pressed', String(powered));
+    $('#powerText').textContent = powered ? 'Power off' : 'Power on';
+  });
+
+  // ---------- reference recording (A/B) ----------
+  function startRef() {
+    if (!ctx || !refBuf) return;
+    if (refSrc) { try { refSrc.stop(); } catch (e) {} }
+    refSrc = ctx.createBufferSource(); refSrc.buffer = refBuf; refSrc.loop = true;
+    refSrc.connect(anB); refSrc.start();
+  }
+  function applyAb() {
+    document.querySelectorAll('#abMode button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.ab === abMode)));
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    synthGain.gain.setTargetAtTime(abMode === 'ref' ? 0 : 1, t, 0.02);
+    refGain.gain.setTargetAtTime(abMode === 'synth' ? 0 : 1, t, 0.02);
+  }
+  $('#abMode').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; abMode = b.dataset.ab; applyAb(); });
+  $('#refFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      if (!ctx) await startAudio();
+      if (ctx.state === 'suspended') await ctx.resume();
+      refBuf = await ctx.decodeAudioData(await f.arrayBuffer());
+      $('#refStatus').textContent = `${f.name}, ${refBuf.duration.toFixed(1)} s at ${refBuf.sampleRate} Hz`;
+      startRef();
+      if (abMode === 'synth') { abMode = 'ref'; applyAb(); }
+    } catch (err) {
+      $('#refStatus').textContent = `Couldn't decode ${f.name}. Try a 16-bit PCM WAV.`;
+    }
+  });
+
+  // ---------- workload ----------
+  $('#workloads').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    setWorkload(b.dataset.w);
+  });
+  function setWorkload(w) {
+    workload = w;
+    document.querySelectorAll('#workloads button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.w === w)));
+    if (send) send({ type: 'workload', name: w });
+  }
+  $('#flood').addEventListener('change', (e) => { if (send) send({ type: 'flood', on: e.target.checked }); });
+
+  // ---------- presets ----------
+  const presetSel = $('#preset');
+  PRESETS.forEach((pr) => { const o = document.createElement('option'); o.value = pr.id; o.textContent = `${pr.name}: ${pr.note}`; presetSel.appendChild(o); });
+  const custom = document.createElement('option'); custom.value = 'custom'; custom.textContent = 'Custom'; presetSel.appendChild(custom);
+  presetSel.value = presetId;
+  presetSel.addEventListener('change', () => {
+    const pr = PRESETS.find((x) => x.id === presetSel.value); if (!pr) return;
+    presetId = pr.id; params = Object.assign({}, pr.p);
+    syncControls(); onParamsChanged(false);
+  });
+
+  // ---------- designer controls ----------
+  const controls = {};
+  const cards = $('#cards');
+  const groupEls = {};
+  Object.entries(GROUPS).forEach(([g, [title, text]]) => {
+    const card = document.createElement('div'); card.className = 'panel card';
+    card.innerHTML = `<header><h2>${title}</h2><p>${text}</p></header>`;
+    cards.appendChild(card); groupEls[g] = card;
+  });
+  const fmtVal = (key, v, unit) => {
+    if (key === 'cylinders') return Math.round(v).toLocaleString('en-GB');
+    if (key === 'rpm') return `${Math.round(v)} rpm`;
+    const digits = Math.abs(v) >= 100 || Number.isInteger(v) ? 0 : Math.abs(v) >= 10 ? 1 : 2;
+    return `${(+v).toFixed(digits)}${unit ? ' ' + unit : ''}`;
+  };
+  const toSlider = (key, v, min, max) => LOG_KEYS.has(key) ? Math.round(1000 * Math.log(v / min) / Math.log(max / min)) : v;
+  const fromSlider = (key, s, min, max) => LOG_KEYS.has(key) ? Math.round(min * Math.pow(max / min, s / 1000)) : +s;
+
+  PARAMS.forEach(([group, key, label, kind, a, b, step, unit, only]) => {
+    const wrap = document.createElement('div');
+    const id = `p-${key}`;
+    if (kind === 'check') {
+      wrap.className = 'ctl check';
+      wrap.innerHTML = `<input type="checkbox" id="${id}"><label for="${id}">${label}</label>`;
+      const inp = wrap.querySelector('input');
+      inp.addEventListener('change', () => { params[key] = inp.checked; onParamsChanged(true); });
+      controls[key] = { kind, inp, wrap, only };
+    } else if (kind === 'select') {
+      wrap.className = 'ctl';
+      wrap.innerHTML = `<label for="${id}">${label}</label><span></span><select id="${id}">${a.map((v, i) => `<option value="${v}">${b[i]}</option>`).join('')}</select>`;
+      const inp = wrap.querySelector('select');
+      inp.addEventListener('change', () => { params[key] = inp.value; onParamsChanged(true); });
+      controls[key] = { kind, inp, wrap, only };
+    } else {
+      wrap.className = 'ctl';
+      const lmin = LOG_KEYS.has(key) ? 0 : a, lmax = LOG_KEYS.has(key) ? 1000 : b, lstep = LOG_KEYS.has(key) ? 1 : step;
+      wrap.innerHTML = `<label for="${id}">${label}</label><output for="${id}"></output><input type="range" id="${id}" min="${lmin}" max="${lmax}" step="${lstep}"><span class="derived"></span>`;
+      const inp = wrap.querySelector('input'), out = wrap.querySelector('output');
+      inp.addEventListener('input', () => {
+        params[key] = fromSlider(key, inp.value, a, b);
+        out.textContent = fmtVal(key, params[key], unit);
+        onParamsChanged(true);
+      });
+      controls[key] = { kind, inp, out, wrap, only, a, b, unit, derived: wrap.querySelector('.derived') };
+    }
+    groupEls[group].appendChild(wrap);
+  });
+
+  function syncControls() {
+    Object.entries(controls).forEach(([key, c]) => {
+      const v = params[key];
+      if (c.kind === 'check') c.inp.checked = !!v;
+      else if (c.kind === 'select') c.inp.value = v;
+      else { c.inp.value = toSlider(key, v, c.a, c.b); c.out.textContent = fmtVal(key, v, c.unit); }
+      if (c.only) c.wrap.hidden = c.only !== params.actuator;
+    });
+    presetSel.value = presetId;
+    updateDerived();
+  }
+
+  function updateDerived() {
+    const p = params, fr = p.rpm / 60;
+    const set = (k, s) => { if (controls[k] && controls[k].derived) controls[k].derived.textContent = s; };
+    set('rpm', `${fr.toFixed(0)} Hz rotation · ${(30000 / p.rpm).toFixed(2)} ms average latency`);
+    set('slots', `whine at ${(fr * p.slots).toFixed(0)} Hz`);
+    set('polePairs', `electrical ${(fr * p.polePairs).toFixed(0)} Hz`);
+    set('wedges', p.wedges > 0 ? `servo buzz at ${(fr * p.wedges / 1000).toFixed(2)} kHz` : 'dedicated servo surface: no buzz');
+    set('platters', `${p.platters * 2} heads`);
+    set('fullStrokeMs', `about ${(0.58 * p.fullStrokeMs + p.trackMs).toFixed(1)} ms average (a third of the stroke)`);
+    set('stepMs', `${(1000 / p.stepMs).toFixed(0)} Hz step buzz at full rate`);
+    set('armHz', `modes up to ${(p.armHz * 7.9 / 1000).toFixed(1)} kHz`);
+  }
+
+  function onParamsChanged(edited) {
+    if (edited && presetId !== 'custom') { presetId = 'custom'; presetSel.value = 'custom'; }
+    Object.values(controls).forEach((c) => { if (c.only) c.wrap.hidden = c.only !== params.actuator; });
+    updateDerived(); updateLabel(); updateJson(); pushParams();
+  }
+
+  // ---------- cover label ----------
+  function updateLabel() {
+    const p = params, stepper = p.actuator === 'stepper';
+    const model = `HS-${p.size === '5.25' ? '5' : p.size === '2.5' ? '2' : '3'}${String(Math.round(p.rpm / 100)).padStart(3, '0')}${stepper ? 'S' : 'V'}`;
+    $('#modelName').textContent = model;
+    const pr = PRESETS.find((x) => x.id === presetId);
+    $('#modelNote').textContent = pr ? pr.name.toUpperCase() : 'CUSTOM BUILD';
+    const avgSeek = stepper
+      ? (p.cylinders / 3) * p.stepMs + 15
+      : 0.58 * p.fullStrokeMs + p.trackMs;
+    const rows = [
+      ['Spindle', `${p.rpm} rpm`], ['Latency', `${(30000 / p.rpm).toFixed(2)} ms`],
+      ['Form factor', `${p.size}″`], ['Heads', `${p.platters * 2} on ${p.platters} platter${p.platters > 1 ? 's' : ''}`],
+      ['Cylinders', Math.round(p.cylinders).toLocaleString('en-GB')], ['Actuator', stepper ? 'stepper' : 'voice coil'],
+      ['Avg seek', `≈ ${avgSeek.toFixed(avgSeek < 100 ? 1 : 0)} ms`], ['Bearing', p.bearing === 'fdb' ? 'fluid' : 'ball'],
+      ['Parking', p.park === 'ramp' ? 'ramp load' : p.park === 'zone' ? 'landing zone' : 'none'],
+    ];
+    $('#spec').innerHTML = rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('');
+  }
+
+  // ---------- JSON ----------
+  function updateJson() {
+    const pr = PRESETS.find((x) => x.id === presetId);
+    $('#json').value = JSON.stringify({ format: 'hddsynth-drive', version: 1, name: pr ? pr.name : 'Custom', params }, null, 2);
+  }
+  $('#copyJson').addEventListener('click', () => {
+    const ta = $('#json');
+    navigator.clipboard.writeText(ta.value).then(
+      () => { $('#jsonStatus').textContent = 'Copied'; },
+      () => { ta.select(); $('#jsonStatus').textContent = 'Selected: press Ctrl+C or ⌘C to copy'; });
+  });
+  // Only on the website: the claude.ai artifact's sandbox blocks downloads.
+  if (window.DRIVE_LAB_SITE) {
+    const dl = $('#downloadJson');
+    dl.hidden = false;
+    dl.addEventListener('click', () => {
+      const url = URL.createObjectURL(new Blob([$('#json').value + '\n'], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = 'drive.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      $('#jsonStatus').textContent = 'Downloaded';
+    });
+  }
+  $('#applyJson').addEventListener('click', () => {
+    try {
+      const j = JSON.parse($('#json').value);
+      const src = j.params || j;
+      const next = Object.assign({}, params);
+      PARAMS.forEach(([, key, , kind, a, b]) => {
+        if (!(key in src)) return;
+        if (kind === 'range') next[key] = Math.min(b, Math.max(a, +src[key]));
+        else if (kind === 'check') next[key] = !!src[key];
+        else if (a.includes(src[key])) next[key] = src[key];
+      });
+      params = next; presetId = 'custom';
+      syncControls(); onParamsChanged(false);
+      $('#jsonStatus').textContent = 'Applied';
+    } catch (err) {
+      $('#jsonStatus').textContent = `That isn't valid JSON: ${err.message}`;
+    }
+  });
+
+  // ---------- mixer ----------
+  const mixerEl = $('#mixer');
+  const meters = [];
+  function mixRow(name, onGain, gain, ms) {
+    const row = document.createElement('div'); row.className = 'ch';
+    const id = `mix-${name.toLowerCase()}`;
+    row.innerHTML = `<label class="name" for="${id}">${name}</label>
+      <span class="ms">${ms ? '<button class="m" aria-pressed="false" title="Mute">M</button><button class="s" aria-pressed="false" title="Solo">S</button>' : ''}</span>
+      <input type="range" id="${id}" min="0" max="1.5" step="0.01" value="${gain}">
+      <div class="meter" aria-hidden="true"><i></i></div>`;
+    row.querySelector('input').addEventListener('input', (e) => onGain(+e.target.value));
+    mixerEl.appendChild(row);
+    return row;
+  }
+  LAYERS.forEach((l, i) => {
+    const row = mixRow(l.name, (g) => { l.g = g; pushParams(); }, l.g, true);
+    const [m, s] = row.querySelectorAll('.ms button');
+    m.addEventListener('click', () => { l.m = !l.m; m.setAttribute('aria-pressed', String(l.m)); pushParams(); });
+    s.addEventListener('click', () => { l.s = !l.s; s.setAttribute('aria-pressed', String(l.s)); pushParams(); });
+    meters[i] = row.querySelector('.meter i');
+  });
+  const masterRow = mixRow('Master', (g) => { master = g; pushParams(); }, master, false);
+  meters[5] = masterRow.querySelector('.meter i');
+
+  // ---------- drawing ----------
+  const css = () => { const s = getComputedStyle(document.documentElement); const g = (n) => s.getPropertyValue(n).trim(); return {
+    sunk: g('--sunk'), ink: g('--ink'), muted: g('--muted'), line: g('--line'), accent: g('--accent'), trace: g('--trace'),
+    pa: g('--platter-a'), pb: g('--platter-b'), casting: g('--casting'), edge: g('--casting-edge'), ledOff: g('--led-off'),
+    lo: g('--spec-lo'), mid: g('--spec-mid'), hi: g('--spec-hi') }; };
+  let C = css();
+  const mq = matchMedia('(prefers-color-scheme: dark)');
+  mq.addEventListener && mq.addEventListener('change', () => { C = css(); specColours(); });
+  new MutationObserver(() => { C = css(); specColours(); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  const plat = $('#platter'), pctx = plat.getContext('2d');
+  let geom = null;
+  let spinAngle = 0, lastFrame = performance.now(), dispX = params.park === 'ramp' ? -0.06 : 1.04;
+
+  function fitCanvas(cv) {
+    const r = cv.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    return [w, h, dpr];
+  }
+
+  function headPoint(xs, g) {
+    // Radius from the stroke position: x 0 = outer data edge, 1 = inner.
+    const r = g.ro - xs * (g.ro - g.ri);
+    const D = Math.hypot(g.px - g.cx, g.py - g.cy);
+    const base = Math.atan2(g.cy - g.py, g.cx - g.px);
+    const cosT = Math.max(-1, Math.min(1, (g.L * g.L + D * D - r * r) / (2 * g.L * D)));
+    const th = base + Math.acos(cosT);
+    return [g.px + g.L * Math.cos(th), g.py + g.L * Math.sin(th), th];
+  }
+
+  function drawPlatter(now) {
+    const [W, H, dpr] = fitCanvas(plat);
+    const g = pctx;
+    g.clearRect(0, 0, W, H);
+    const R = Math.min(W * 0.36, H * 0.44);
+    const cx = W * 0.4, cy = H * 0.5;
+    geom = { cx, cy, R, ro: R * 0.96, ri: R * 0.96 * 0.45, px: cx + R * 1.28, py: cy + R * 0.82, L: R * 1.38, W, H, dpr };
+    // Casting
+    g.fillStyle = C.casting; g.strokeStyle = C.edge; g.lineWidth = 2 * dpr;
+    const m = 14 * dpr;
+    roundRect(g, m, m, W - 2 * m, H - 2 * m, 16 * dpr); g.fill(); g.stroke();
+    // Platter
+    const grad = g.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
+    grad.addColorStop(0, C.pb); grad.addColorStop(0.55, C.pa); grad.addColorStop(1, C.pb);
+    g.fillStyle = grad; g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = C.edge; g.lineWidth = 1 * dpr; g.stroke();
+    // Data zone edges and a few track rings
+    g.strokeStyle = C.line; g.globalAlpha = 0.6;
+    for (let i = 0; i <= 6; i++) { const r = geom.ri + (geom.ro - geom.ri) * i / 6; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke(); }
+    g.globalAlpha = 1;
+    // Rotation: an index mark, visible only while slow enough to see
+    const rpm = tel ? tel.rpm : 0;
+    const dtf = (now - lastFrame) / 1000; lastFrame = now;
+    spinAngle = (spinAngle + (rpm / 60) * Math.PI * 2 * dtf) % (Math.PI * 2);
+    const vis = Math.max(0, 1 - rpm / 500);
+    if (vis > 0.02) {
+      g.strokeStyle = C.ink; g.globalAlpha = 0.5 * vis; g.lineWidth = 3 * dpr;
+      g.beginPath(); g.moveTo(cx + Math.cos(spinAngle) * R * 0.3, cy + Math.sin(spinAngle) * R * 0.3);
+      g.lineTo(cx + Math.cos(spinAngle) * R * 0.98, cy + Math.sin(spinAngle) * R * 0.98); g.stroke(); g.globalAlpha = 1;
+    }
+    if (rpm > 300) {
+      g.strokeStyle = C.pb; g.globalAlpha = Math.min(0.5, rpm / 6000); g.lineWidth = R * 0.05;
+      g.beginPath(); g.arc(cx, cy, R * 0.72, -0.6, 0.1); g.stroke();
+      g.beginPath(); g.arc(cx, cy, R * 0.72, Math.PI - 0.6, Math.PI + 0.1); g.stroke(); g.globalAlpha = 1;
+    }
+    // Hub
+    g.fillStyle = C.casting; g.beginPath(); g.arc(cx, cy, R * 0.22, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = C.edge; g.stroke();
+    g.fillStyle = C.edge;
+    for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3 + spinAngle * (vis > 0.02 ? 1 : 0); g.beginPath(); g.arc(cx + Math.cos(a) * R * 0.14, cy + Math.sin(a) * R * 0.14, R * 0.018, 0, Math.PI * 2); g.fill(); }
+    // Ramp (load/unload) just outside the platter
+    if (params.park === 'ramp' && params.actuator !== 'stepper') {
+      const [rx, ry] = headPoint(-0.08, geom);
+      g.fillStyle = C.edge; g.save(); g.translate(rx, ry); g.rotate(Math.atan2(ry - cy, rx - cx));
+      g.fillRect(-R * 0.02, -R * 0.05, R * 0.12, R * 0.1); g.restore();
+    }
+    // Arm
+    const target = tel ? tel.x : dispX;
+    dispX += (target - dispX) * 0.6;
+    const [hx0, hy0, th] = headPoint(dispX, geom);
+    g.strokeStyle = C.ink; g.lineCap = 'round';
+    g.lineWidth = R * 0.07; g.globalAlpha = 0.85;
+    g.beginPath(); g.moveTo(geom.px, geom.py); g.lineTo(geom.px + (hx0 - geom.px) * 0.55, geom.py + (hy0 - geom.py) * 0.55); g.stroke();
+    g.lineWidth = R * 0.03;
+    g.beginPath(); g.moveTo(geom.px + (hx0 - geom.px) * 0.5, geom.py + (hy0 - geom.py) * 0.5); g.lineTo(hx0, hy0); g.stroke();
+    g.globalAlpha = 1;
+    // Voice coil / stepper body behind the pivot
+    g.fillStyle = C.edge;
+    g.save(); g.translate(geom.px, geom.py); g.rotate(th + Math.PI);
+    if (params.actuator === 'stepper') { g.fillRect(-R * 0.12, -R * 0.12, R * 0.24, R * 0.24); }
+    else { g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, R * 0.32, -0.35, 0.35); g.closePath(); g.fill(); }
+    g.restore();
+    g.fillStyle = C.ink; g.beginPath(); g.arc(geom.px, geom.py, R * 0.06, 0, Math.PI * 2); g.fill();
+    // Slider (head)
+    g.fillStyle = C.accent; g.beginPath(); g.arc(hx0, hy0, R * 0.028, 0, Math.PI * 2); g.fill();
+    // Activity LED
+    const busy = tel && tel.busy;
+    g.fillStyle = busy ? C.accent : C.ledOff;
+    if (busy) { g.shadowColor = C.accent; g.shadowBlur = 12 * dpr; }
+    g.beginPath(); g.arc(W - m - 22 * dpr, m + 22 * dpr, 6 * dpr, 0, Math.PI * 2); g.fill();
+    g.shadowBlur = 0;
+  }
+  function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+
+  plat.addEventListener('click', (e) => {
+    if (!geom || !send) return;
+    const r = plat.getBoundingClientRect();
+    const px = (e.clientX - r.left) * geom.dpr, py = (e.clientY - r.top) * geom.dpr;
+    const rad = Math.hypot(px - geom.cx, py - geom.cy);
+    if (rad < geom.ri * 0.95 || rad > geom.ro * 1.03) return;
+    const xs = Math.max(0, Math.min(1, (geom.ro - rad) / (geom.ro - geom.ri)));
+    if (workload !== 'idle') setWorkload('idle');
+    send({ type: 'seekX', x: xs });
+  });
+
+  // Scope
+  const scope = $('#scope'), sctx = scope.getContext('2d');
+  function drawScope() {
+    const [W, H, dpr] = fitCanvas(scope);
+    const g = sctx; g.clearRect(0, 0, W, H);
+    g.strokeStyle = C.line; g.lineWidth = 1;
+    for (let i = 1; i < 4; i++) { const y = Math.round(H * i / 4) + 0.5; g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+    let vmax = 1e-6;
+    for (let i = 0; i < HIST; i++) vmax = Math.max(vmax, Math.abs(hv[i]));
+    // speed (filled)
+    g.fillStyle = C.accent; g.globalAlpha = 0.35; g.beginPath(); g.moveTo(0, H);
+    for (let i = 0; i < HIST; i++) { const k = (hpos + i) % HIST; g.lineTo(i / (HIST - 1) * W, H - Math.abs(hv[k]) / vmax * (H - 6)); }
+    g.lineTo(W, H); g.closePath(); g.fill(); g.globalAlpha = 1;
+    // position
+    g.strokeStyle = C.trace; g.lineWidth = 1.6 * dpr; g.beginPath();
+    for (let i = 0; i < HIST; i++) {
+      const k = (hpos + i) % HIST; const y = 4 + Math.max(-0.08, Math.min(1.08, hx[k])) / 1.16 * (H - 8) + 0.08 / 1.16 * (H - 8);
+      i ? g.lineTo(i / (HIST - 1) * W, y) : g.moveTo(0, y);
+    }
+    g.stroke();
+  }
+
+  // Spectrograms
+  const FMIN = 40, FMAX = 16000;
+  let lut = null;
+  function specColours() {
+    const hex = (h) => { h = h.replace('#', ''); if (h.length === 3) h = h.split('').map((c) => c + c).join(''); return [0, 2, 4].map((i) => parseInt(h.substr(i, 2), 16)); };
+    const lo = hex(C.lo || '#000'), mid = hex(C.mid || '#00f'), hi = hex(C.hi || '#f80');
+    lut = new Uint8ClampedArray(256 * 3);
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255, [a, b, u] = t < 0.55 ? [lo, mid, t / 0.55] : [mid, hi, (t - 0.55) / 0.45];
+      for (let c = 0; c < 3; c++) lut[i * 3 + c] = a[c] + (b[c] - a[c]) * u;
+    }
+  }
+  specColours();
+  function axis(el) {
+    el.innerHTML = [100, 1000, 10000].map((f) => {
+      const t = Math.log(f / FMIN) / Math.log(FMAX / FMIN);
+      return `<span style="bottom:${(t * 100).toFixed(1)}%">${f >= 1000 ? f / 1000 + 'k' : f}</span>`;
+    }).join('');
+  }
+  axis($('#axisA')); axis($('#axisB'));
+  const specs = [
+    { cv: $('#specA'), an: () => anA, on: () => true, data: null },
+    { cv: $('#specB'), an: () => anB, on: () => !!refBuf, data: null },
+  ];
+  specs.forEach((s) => { s.g = s.cv.getContext('2d'); });
+  function drawSpec(s) {
+    const an = s.an(); if (!an || !s.on()) return;
+    const cv = s.cv, g = s.g, W = cv.width, H = cv.height;
+    if (!s.data || s.data.length !== an.frequencyBinCount) s.data = new Uint8Array(an.frequencyBinCount);
+    an.getByteFrequencyData(s.data);
+    g.drawImage(cv, -2, 0);
+    const col = g.createImageData(2, H), nyq = ctx.sampleRate / 2, bins = s.data.length;
+    for (let y = 0; y < H; y++) {
+      const f = FMIN * Math.pow(FMAX / FMIN, 1 - y / (H - 1));
+      const v = s.data[Math.min(bins - 1, Math.round(f / nyq * bins))];
+      for (let xx = 0; xx < 2; xx++) { const o = (y * 2 + xx) * 4; col.data[o] = lut[v * 3]; col.data[o + 1] = lut[v * 3 + 1]; col.data[o + 2] = lut[v * 3 + 2]; col.data[o + 3] = 255; }
+    }
+    g.putImageData(col, W - 2, 0);
+  }
+
+  // Readouts and meters
+  const STATE_NAMES = { off: 'Off', spinup: 'Spin-up', calib: 'Calibrate', ready: 'Ready' };
+  function drawReadouts() {
+    if (!tel) return;
+    $('#roRpm').innerHTML = `${Math.round(tel.rpm)} <small>rpm</small>`;
+    $('#roState').textContent = !tel.powered && tel.rpm > 1 ? 'Spin-down' : STATE_NAMES[tel.state] || tel.state;
+    $('#roCyl').textContent = Math.max(0, tel.track).toLocaleString('en-GB');
+    $('#roSeek').innerHTML = tel.seekCount ? `${tel.lastSeekMs.toFixed(tel.lastSeekMs < 100 ? 1 : 0)} <small>ms</small>` : '–';
+    const rate = seekLog.length > 1 ? (seekLog[seekLog.length - 1][1] - seekLog[0][1]) * 1000 / Math.max(1, seekLog[seekLog.length - 1][0] - seekLog[0][0]) : 0;
+    $('#roRate').textContent = rate.toFixed(0);
+    const toW = (r) => Math.max(0, Math.min(100, (20 * Math.log10(Math.max(r, 1e-5)) + 60) / 60 * 100));
+    tel.rms.forEach((r, i) => { meters[i].style.width = toW(r * 3) + '%'; });
+    meters[5].style.width = toW(Math.sqrt(tel.rms.reduce((a, r) => a + r * r, 0)) * 3 * master) + '%';
+    $('#hint').textContent = tel.state === 'ready' ? 'Click a track to seek there.' : tel.powered ? 'Spinning up…' : 'Power the drive on, then click a track to seek there.';
+  }
+
+  function frame(now) {
+    drawPlatter(now); drawScope();
+    specs.forEach(drawSpec);
+    drawReadouts();
+    requestAnimationFrame(frame);
+  }
+
+  // Seed the scope with the parked head so the first frame isn't empty.
+  hx.fill(params.park === 'ramp' ? -0.06 : 1.04);
+  syncControls(); updateLabel(); updateJson();
+  specs.forEach((s) => { const g = s.g; g.fillStyle = C.lo; g.fillRect(0, 0, s.cv.width, s.cv.height); });
+  requestAnimationFrame(frame);
+})();
+</script>

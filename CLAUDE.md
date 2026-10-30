@@ -112,6 +112,17 @@ or file I/O, and never block core 1.
   `sd::finishTransfers()`), `sd::writeSector()` closes each write, and
   `cardResponds()` sends the stop token and CMD12 before retrying CMD0 (for
   unplanned resets; not yet exercised on hardware, as our card never needed it).
+- **Fast code on core 1:** code in flash runs through the 16 KB XIP cache
+  that both cores share, and a big per-sample loop there stalls on flash
+  reads (the drive engine took 4.7 ms per 4 ms block). Put the hot path in
+  RAM with `__attribute__((section(".time_critical.<name>")))`, and force
+  its small helpers inline: left out of line, the compiler puts them in
+  flash and calls them through veneers (check the disassembly for `bl`
+  to `..._veneer`). Avoid `sqrtf()` (it keeps errno, so it's a software
+  routine that also links ~5 KB of float helpers into RAM; use `vsqrt.f32`,
+  see `sqrtFast()`), `tanf()`/`powf()` per sample, doubles (the FPU is
+  single precision), and float-to-64-bit conversions (`__aeabi_f2ulz`).
+  `mix_max` in `[stats]` is the worst block's mix time.
 - **Unit tests:** host-side tests run with plain `c++` (not `pio test`):
   `test/run_native_tests.sh [path/to/HDDSynth_Samples]`. They use
   ASan/UBSan; also run them under TSan when touching the ring buffer or the
@@ -152,6 +163,13 @@ trigger the release workflow.
   action button (`button.h`: debounce and short/long press, host-tested).
 - `persist.*`: saved pack and jingle flag in the EEPROM-emulation flash
   sector; `persist_format.*` is the CRC-checked record (host-tested).
+- `drive_engine.*`, `drive_params.*`, `drive_workload.h`: the modelled drive
+  (pure C++, host-tested), a port of `tools/drive-lab/engine.js` (change
+  both together; `compare.js` checks them). It renders as `VOICE_DRIVE`'s
+  source in `mixBlock()`; core 0 sends commands through its SPSC ring and
+  `updateParams()`. `drive_pack.*` parses `drive.json`. main.cpp's
+  `modelled` flag switches spin-up, run, spindown, standby and demo over to
+  it (`startDrive()`, `spindownPlaying()`).
 - `console.*`: **print through `Console`, not `Serial`.** It writes to USB
   serial and keeps the last lines for the OLED debug screen. (Reading serial
   commands still uses `Serial`.)
@@ -260,6 +278,16 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   macOS gotcha: QFormLayout keeps fields at their size hint, so custom
   widgets need a sizeHint() (the supercap bar was 0 px wide).
 
+- Modelled drives (`drive.json`, v0.20.0): see the README. Designed in the
+  browser prototype (`tools/drive-lab`), published to GitHub Pages by
+  `.github/workflows/pages.yml` (https://maverickuk.github.io/HDDSynth_Native/drive-lab/).
+  Verified 2026-10-30 on hardware with the four presets (packs
+  `MODEL_*` on the test card): ~0.9-1.05 ms per 4 ms block at 32 kHz with
+  simulated activity, no underflows, the modelled spindown on a simulated
+  power loss (8.3 s for `voice97`). Next (the plan's phase 3): `$HDE` head
+  positions from HDDSynthPro, live tuning from the companion app
+  (`$HDC,1,SET`), and optional recorded grains (seek, park) per pack.
+
 **Still to port from the Python firmware:**
 - [x] Rotary encoder: volume / balance, with button toggling the mode
       (`controls.*`, decoding in `quadrature.h`).
@@ -305,5 +333,7 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
 - ~~Whether `PB_MicroScience612`'s spindown fits in RAM~~: yes, tested
   2026-10-16 (v0.9.0). Its 11 s spindown loads into RAM leaving 45 KB free,
   13 KB above `HEAP_RESERVE_BYTES`; it passed a 60 s stress test. **RAM
-  budget:** a new feature that uses more than ~13 KB of RAM pushes this
+  budget:** v0.20.0's modelled drive took ~7 KB of that margin (its code in
+  RAM), leaving ~6 KB: a new feature that uses more than that pushes this
   pack's spindown onto the streamed fallback (works, but check it).
+  `EXPERIMENTAL_HDDSYNTHPRO_SUPPORT` (32 KB ring) already does.

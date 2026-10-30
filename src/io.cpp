@@ -18,6 +18,7 @@ bool simulate = false;
 uint32_t lastActiveMs = 0;
 bool simState = false;
 bool simSequential = false;  // the current simulated burst is a sequential spell
+bool sequentialSpells = false;  // simulate them even without HDDSynthPro support (a modelled drive)
 uint32_t simNextSwitchMs = 0;
 
 void writeChannel(uint8_t pin, uint8_t level) {
@@ -79,9 +80,9 @@ bool activity() {
     if (simulate) {
         if (static_cast<int32_t>(now - simNextSwitchMs) >= 0) {
             simState = random(2);
-            // With HDDSynthPro support, one burst in three is a longer
+            // With HDDSynthPro support (or a modelled drive), one burst in three is a longer
             // sequential transfer.
-            simSequential = simState && settings && settings->hddSynthPro && random(3) == 0;
+            simSequential = simState && settings && (settings->hddSynthPro || sequentialSpells) && random(3) == 0;
             simNextSwitchMs = now + (simSequential ? random(2000, 6000) : random(0, 2000));
         }
         return simState;
@@ -104,5 +105,12 @@ ActivityClass activityClass() {
     if (usbhost::present()) return usbhost::state().cls;
     return ActivityClass::Random;
 }
+
+bool activityClassKnown() {
+    if (simulate) return settings && (settings->hddSynthPro || sequentialSpells);
+    return hddlink::present() || usbhost::present();
+}
+
+void setSequentialSpells(bool on) { sequentialSpells = on; }
 
 } // namespace io

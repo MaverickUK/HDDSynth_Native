@@ -29,6 +29,11 @@ bool activity();
 // Simulation (with EXPERIMENTAL_HDDSYNTHPRO_SUPPORT on) mixes in longer
 // sequential spells, so sequential.wav can be heard without HDDSynthPro.
 ActivityClass activityClass();
+// Whether activityClass() really knows (the link, the app, or simulation
+// with sequential spells), or is just Random because a plain HDD LED can't say.
+bool activityClassKnown();
+// Simulation: mix in longer sequential spells (also for modelled drives).
+void setSequentialSpells(bool on);
 void setSimulation(bool on);
 bool simulation();
 
