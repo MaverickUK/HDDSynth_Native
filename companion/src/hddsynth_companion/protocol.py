@@ -8,7 +8,7 @@ App to device:
     $HDC,1,VOL,<0-100> / BAL,<0-100> / PACK,<i>   commands
 Device to app:
     $HDS,1,<fw>,<state>,<packIndex>,<packCount>,<vol>,<bal>,<supercapMv>
-    $HDP,1,<index>,<count>,<folder>,<name>
+    $HDP,1,<index>,<count>,<folder>,<name>,<R|M>   kind: recorded or modelled (firmware v0.24.0+)
     $HDK,1,<command>,<OK|ERR>,<reason>
 
 This mirrors the firmware's src/host_protocol.h and src/sentence.h. Pure Python, no I/O.
@@ -104,6 +104,11 @@ class PackEntry:
     count: int
     folder: str
     name: str           # pack.json NAME, or the folder name
+    kind: str = ""      # "R" recorded (WAVs), "M" modelled (drive.json), "" from firmware before v0.24.0
+
+    @property
+    def synthesised(self) -> bool:
+        return self.kind == "M"
 
 
 @dataclass(frozen=True)
@@ -125,7 +130,7 @@ def parse_reply(line: str) -> Optional[Reply]:
         if f[0] == "HDS" and len(f) >= 9:
             return Status(f[2], f[3], int(f[4]), int(f[5]), int(f[6]), int(f[7]), int(f[8]))
         if f[0] == "HDP" and len(f) >= 6:
-            return PackEntry(int(f[2]), int(f[3]), f[4], f[5])
+            return PackEntry(int(f[2]), int(f[3]), f[4], f[5], f[6] if len(f) >= 7 else "")
         if f[0] == "HDK" and len(f) >= 5:
             return Ack(f[2], f[3] == "OK", f[4])
     except ValueError:

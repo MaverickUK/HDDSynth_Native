@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org). Linked versions have a
 release with its UF2 on the
 [releases page](https://github.com/MaverickUK/HDDSynth_Native/releases).
 
+## [0.24.0] - 2026-10-30
+
+### Added
+- The companion app's pack list (`$HDP`) says whether each pack is
+  recorded (`R`) or modelled (`M`), so the app can mark synthesised packs.
+
 ## [0.23.0] - 2026-10-30
 
 ### Added

@@ -61,6 +61,38 @@ def _drive_icon(led: Optional[QColor], dimmed: bool = False) -> QIcon:
     return QIcon(pm)
 
 
+def _pack_pixmap(synthesised: bool) -> QPixmap:
+    """A pack's kind: a recording's ragged waveform (grey), or a clean sine
+    for a modelled drive synthesised live (orange, the Drive Lab's colour)."""
+    pm = QPixmap(64, 64)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    if synthesised:
+        p.setPen(QPen(ORANGE, 6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        pts = [QPointF(6 + x, 32 - 20 * math.sin(x / 52 * 2 * math.pi)) for x in range(0, 53, 2)]
+    else:
+        p.setPen(QPen(QColor(130, 130, 135), 5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        heights = [4, 12, 7, 22, 10, 26, 14, 8, 18, 5, 11, 3]
+        pts = [QPointF(6 + i * 52 / (len(heights) - 1), 32 + (h if i % 2 else -h)) for i, h in enumerate(heights)]
+    for a, b in zip(pts, pts[1:]):
+        p.drawLine(a, b)
+    p.end()
+    return pm
+
+
+_PACK_ICONS: dict[bool, QIcon] = {}
+
+
+def _pack_icon(pack: protocol.PackEntry) -> QIcon:
+    """The pack's kind as an icon; none from firmware too old to say (before v0.24.0)."""
+    if not pack.kind:
+        return QIcon()
+    if pack.synthesised not in _PACK_ICONS:
+        _PACK_ICONS[pack.synthesised] = QIcon(_pack_pixmap(pack.synthesised))
+    return _PACK_ICONS[pack.synthesised]
+
+
 def _bring_to_front(w: QWidget) -> None:
     w.show()
     w.raise_()
@@ -211,6 +243,27 @@ class SettingsWindow(QWidget):
         self.supercap_label.setAlignment(Qt.AlignRight | Qt.AlignTop)
         self.pack_combo = QComboBox()
         self.pack_combo.activated.connect(self._pack_chosen)
+        # What the packs' icons mean, shown once the firmware says (v0.24.0+).
+        self.pack_legend = QWidget()
+        lg = QHBoxLayout(self.pack_legend)
+        lg.setContentsMargins(0, 0, 0, 0)
+        lg.setSpacing(4)
+        for synthesised, text in ((False, "recorded samples"), (True, "synthesised live (a modelled drive)")):
+            icon = QLabel()
+            icon.setPixmap(_pack_pixmap(synthesised).scaled(14, 14, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            lab = QLabel(text)
+            lab.setStyleSheet("color: gray; font-size: 10px")
+            lg.addWidget(icon)
+            lg.addWidget(lab)
+            lg.addSpacing(10)
+        lg.addStretch(1)
+        self.pack_legend.hide()
+        pack_box = QWidget()
+        pb = QVBoxLayout(pack_box)
+        pb.setContentsMargins(0, 0, 0, 0)
+        pb.setSpacing(2)
+        pb.addWidget(self.pack_combo)
+        pb.addWidget(self.pack_legend)
 
         self.volume = self._slider()
         self.volume_label = QLabel()
@@ -260,7 +313,7 @@ class SettingsWindow(QWidget):
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         form.addRow("Device", self.device_label)
         form.addRow("Supercap", self._row(self.supercap, self.supercap_label))
-        form.addRow("Sample pack", self.pack_combo)
+        form.addRow("Sample pack", pack_box)
         form.addRow("Volume", self._row(self.volume, self.volume_label))
         form.addRow("Balance", self._row(self.balance, self.balance_label))
         form.addRow("", self.send_activity)
@@ -332,7 +385,8 @@ class SettingsWindow(QWidget):
         self.pack_combo.blockSignals(True)
         self.pack_combo.clear()
         for i in sorted(a.packs):
-            self.pack_combo.addItem(a.packs[i].name, i)
+            self.pack_combo.addItem(_pack_icon(a.packs[i]), a.packs[i].name, i)
+        self.pack_legend.setVisible(any(p.kind for p in a.packs.values()))
         if st is not None and st.pack_index in a.packs:
             self.pack_combo.setCurrentIndex(sorted(a.packs).index(st.pack_index))
         self.pack_combo.blockSignals(False)
@@ -578,7 +632,8 @@ class Companion(QObject):
         for a in self.pack_group.actions():
             self.pack_group.removeAction(a)
         for i in sorted(self.packs):
-            act = QAction(self.packs[i].name, self.packs_menu, checkable=True)
+            act = QAction(_pack_icon(self.packs[i]), self.packs[i].name, self.packs_menu, checkable=True)
+            act.setIconVisibleInMenu(True)  # macOS hides menu icons unless asked
             act.setChecked(st is not None and st.pack_index == i)
             act.triggered.connect(lambda _checked=False, i=i: self.choose_pack(i))
             self.pack_group.addAction(act)

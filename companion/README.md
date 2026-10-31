@@ -97,7 +97,11 @@ The **settings** window has:
   estimates until a real power cut is measured. It fills up over the first
   half minute or so after power-on.
 - **Sample pack**, **Volume** and **Balance**: the same settings as the
-  encoder. They're saved on the device (if `SAVE_VOLUME_BALANCE` is on), and
+  encoder. An icon marks each pack's kind: a grey waveform for recorded
+  samples, an orange sine for a modelled drive, synthesised live
+  (`drive.json`), with a key below. Needs firmware v0.24.0; older firmware
+  doesn't say. (The tray menu sets the icons too, but macOS doesn't show
+  them there.) They're saved on the device (if `SAVE_VOLUME_BALANCE` is on), and
   follow the encoder if you turn it. Balance mixes the idle sound (left)
   against the access sound (right).
 - **Play this computer's disk activity**: untick it to use the app only as a

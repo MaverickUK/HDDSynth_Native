@@ -6,7 +6,7 @@
 //                   $HDE,2,<pos>,<op>,<sectors>  a command's target (link_parser.h)
 //                   $HDC,1,VOL,<0-100> | $HDC,1,BAL,<0-100> | $HDC,1,PACK,<index>
 //   device -> app   $HDS,1,<fw>,<state>,<packIndex>,<packCount>,<vol>,<bal>,<supercapMv>
-//                   $HDP,1,<index>,<count>,<folder>,<name>   one per pack
+//                   $HDP,1,<index>,<count>,<folder>,<name>,<R|M>   one per pack: recorded or modelled
 //                   $HDK,1,<VOL|BAL|PACK>,<OK|ERR>,<reason>
 //                   $HDM,2,...                   the modelled drive's timing (drive_timing.h)
 //

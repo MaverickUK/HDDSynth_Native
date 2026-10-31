@@ -33,7 +33,13 @@ def test_parse_status():
 def test_parse_pack_and_ack():
     body = "HDP,1,2,8,PB_IBM_Ultrastar,IBM Ultrastar 36LZX"
     r = protocol.parse_reply(protocol.format_sentence(body).decode())
-    assert r == protocol.PackEntry(2, 8, "PB_IBM_Ultrastar", "IBM Ultrastar 36LZX")
+    assert r == protocol.PackEntry(2, 8, "PB_IBM_Ultrastar", "IBM Ultrastar 36LZX")  # before v0.24.0: no kind
+    assert not r.synthesised
+    rec = protocol.parse_reply(protocol.format_sentence(body + ",R").decode())
+    assert rec == protocol.PackEntry(2, 8, "PB_IBM_Ultrastar", "IBM Ultrastar 36LZX", "R")
+    assert not rec.synthesised
+    model = protocol.parse_reply(protocol.format_sentence("HDP,1,9,12,MODEL_FDB2005,2005 7200 rpm,M").decode())
+    assert model.synthesised and model.name == "2005 7200 rpm"
     ok = protocol.parse_reply(protocol.format_sentence("HDK,1,VOL,OK,").decode())
     assert ok == protocol.Ack("VOL", True, "")
     err = protocol.parse_reply(protocol.format_sentence("HDK,1,PACK,ERR,busy").decode())

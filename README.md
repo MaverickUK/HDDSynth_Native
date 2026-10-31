@@ -391,7 +391,7 @@ every byte between `$` and `*`.
 | app → board | `$HDC,1,BAL,<0-100>` | Set the balance. |
 | app → board | `$HDC,1,PACK,<index>` | Switch to that pack (as the action button does, remembered). Only in RUN or STANDBY, and not in demo mode. |
 | board → app | `$HDS,1,<firmware>,<state>,<packIndex>,<packCount>,<volume>,<balance>,<supercapMv>` | Status. Also sent unprompted when the pack, volume, balance or state changes (at most every 250 ms) while the app is connected. |
-| board → app | `$HDP,1,<index>,<count>,<folder>,<name>` | One pack: its folder and its pack.json `NAME` (or the folder), each up to 32 characters, with `,`, `*` and `$` replaced by `_`. |
+| board → app | `$HDP,1,<index>,<count>,<folder>,<name>,<kind>` | One pack: its folder and its pack.json `NAME` (or the folder), each up to 32 characters, with `,`, `*` and `$` replaced by `_`; and its kind, `R` (recorded: WAVs) or `M` (modelled: `drive.json`). The kind was added in v0.24.0; earlier firmware leaves it out. |
 | board → app | `$HDK,1,<VOL\|BAL\|PACK>,<OK\|ERR>,<reason>` | Reply to a command; reasons are `busy`, `demo` and `range`. |
 | board → app | `$HDM,2,<V\|S>,<rpm>,<cylinders>,<fullStroke ms x10>,<track ms x10>,<settleDamp x100>,<step ms x10>,<stepRamp x100>,<zoned>` | The modelled drive's timing (`$HDM,2,-` for a recorded pack). |
 

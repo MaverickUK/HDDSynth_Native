@@ -5,6 +5,16 @@ The HDD Synth Companion app. The format follows
 [Semantic Versioning](https://semver.org). The version is in
 `src/hddsynth_companion/__init__.py`.
 
+## 0.2.0 - 2026-10-30
+
+### Added
+- Each sample pack in the settings window has an icon for its kind: a grey
+  waveform for recorded samples, an orange sine for a modelled drive
+  synthesised live, with a key. The tray menu's pack items set them too,
+  but macOS doesn't show them there (not yet tried on Windows).
+  Needs firmware v0.24.0 (`$HDP`'s new kind field); with older firmware
+  the packs have no icon.
+
 ## 0.1.0 - 2026-10-29
 
 ### Added

@@ -489,8 +489,9 @@ void sendStatus() {
     usbhost::send(body);
 }
 
-// One $HDP per pack, with pack.json's NAME where there is one. A few small
-// SD reads: fine while the rings hold ~1 s.
+// One $HDP per pack, with pack.json's NAME where there is one, and whether
+// it's recorded (R: WAVs) or modelled (M: drive.json). A few small SD reads:
+// fine while the rings hold ~1 s.
 void sendPackList() {
     static char json[1024];
     int count = 0;
@@ -505,8 +506,10 @@ void sendPackList() {
         char safeFolder[33], safeName[33];
         sanitiseName(folder, safeFolder, sizeof(safeFolder));
         sanitiseName(info.name[0] ? info.name : folder, safeName, sizeof(safeName));
+        snprintf(p, sizeof(p), "/samples/%s/drive.json", folder);
+        const char kind = sd::fileExists(p) ? 'M' : 'R';
         char body[112];
-        snprintf(body, sizeof(body), "HDP,1,%d,%d,%s,%s", i, count, safeFolder, safeName);
+        snprintf(body, sizeof(body), "HDP,1,%d,%d,%s,%s,%c", i, count, safeFolder, safeName, kind);
         usbhost::send(body);
     }
 }
