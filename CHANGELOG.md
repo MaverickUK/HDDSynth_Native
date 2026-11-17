@@ -6,6 +6,19 @@ follow [Semantic Versioning](https://semver.org). Linked versions have a
 release with its UF2 on the
 [releases page](https://github.com/MaverickUK/HDDSynth_Native/releases).
 
+## [0.24.1] - 2026-11-17
+
+### Fixed
+- **The activity link's reply (`$HDM`, the playing pack's model) was never
+  sent**, so HDDSynthPro's `seek_timing = synth` had no model
+  (`[stats] link: ... sent=0`; HDDSynthPro's `hdm_valid=0`). It waited for
+  `Serial2.availableForWrite()` to cover the whole sentence, but on
+  Arduino-Pico that says only whether one byte fits (1 or 0); and a model
+  sentence (about 46 bytes) is longer than the UART's 32-byte FIFO anyway.
+  The sentence is now queued (`tx_drip.h`, host-tested) and fed to the FIFO
+  a byte at a time on each loop pass while it has room: still never waits.
+  Found with IDE Synth Bay 0.35.0-dev.8 on the Evesham (17 Nov 2026).
+
 ## [0.24.0] - 2026-10-30
 
 ### Added

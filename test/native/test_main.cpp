@@ -32,6 +32,7 @@
 #include "levels_format.h"
 #include "host_protocol.h"
 #include "link_parser.h"
+#include "tx_drip.h"
 #include "persist_format.h"
 #include "powerlog_format.h"
 #include "quadrature.h"
@@ -1020,6 +1021,41 @@ static int feedAll(LinkParser& p, const char* text) {
     return n;
 }
 
+// The $HDM reply: fed to a FIFO that takes a few bytes per loop pass, it all
+// goes out in order, never more at once than there's room for (v0.24.0 sent
+// nothing: it waited for room for the whole sentence, which Arduino-Pico's
+// availableForWrite() never reports).
+TEST(link_reply_drips_into_the_fifo) {
+    TxDrip tx;
+    const char model[] = "$HDM,2,V,5400,6000,190,20,30,5,100,1*4F\r\n";
+    const size_t n = sizeof(model) - 1;
+    CHECK(n > 32);  // longer than the UART's hardware FIFO
+    CHECK(tx.start(model, n));
+    CHECK(tx.busy());
+    CHECK(!tx.start("$HDM,2,-*00\r\n", 13));  // one at a time
+    std::string out;
+    int passes = 0;
+    while (tx.busy() && passes < 100) {
+        int room = 5;  // five bytes drain per pass, say
+        size_t w = tx.drain([&] { return room > 0; }, [&](char c) { out += c; --room; });
+        CHECK(w <= 5);
+        ++passes;
+    }
+    CHECK_EQ(out.size(), n);
+    CHECK(out == model);
+    CHECK(!tx.busy());
+    // No room: nothing written, still waiting.
+    CHECK(tx.start("$HDM,2,-*00\r\n", 13));
+    CHECK_EQ(tx.drain([] { return false; }, [](char) {}), 0u);
+    CHECK(tx.busy());
+    // Too long or empty: refused.
+    TxDrip t2;
+    std::string big(TxDrip::CAPACITY + 1, 'x');
+    CHECK(!t2.start(big.data(), big.size()));
+    CHECK(!t2.start("", 0));
+    CHECK(!t2.busy());
+}
+
 TEST(link_known_answers) {
     LinkState s;
     CHECK(parseLine("$HDA,1,0,I,-*28", s));
@@ -1733,6 +1769,7 @@ int main(int argc, char** argv) {
     RUN(drive_timing_matches_the_engine);
     RUN(drive_timing_rotation_and_transfer);
     RUN(drive_follows_link_targets);
+    RUN(link_reply_drips_into_the_fifo);
     std::printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

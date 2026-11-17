@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "console.h"
+#include "tx_drip.h"
 
 namespace hddlink {
 
@@ -16,6 +17,7 @@ LinkParser parser;
 LinkWatch watch;
 HeadFeed headFeed;
 uint32_t sent = 0;
+TxDrip tx;  // the $HDM going out (send), fed to the FIFO by service()
 
 char className(ActivityClass c) {
     switch (c) {
@@ -35,8 +37,9 @@ void begin() {
     Serial2.setRX(cfg::PIN_LINK_RX);
     Serial2.setTX(cfg::PIN_LINK_TX);
     Serial2.setFIFOSize(512);
-    // The receive buffer above; transmit (the $HDM replies) uses the 32-byte
-    // hardware FIFO, and send() never waits for room.
+    // The receive buffer above; transmit (the $HDM replies) goes through the
+    // 32-byte hardware FIFO a byte at a time as it has room (TxDrip), so
+    // nothing ever waits for it.
     Serial2.begin(cfg::LINK_BAUD);
     // With nothing attached, keep the input from floating into noise (a
     // UART line idles high).
@@ -47,6 +50,10 @@ void begin() {
 
 void service() {
     if (!started) return;
+    // The reply going out: availableForWrite() is 1 while a byte fits (it
+    // never says how many), and a write then doesn't wait.
+    tx.drain([] { return Serial2.availableForWrite() > 0; },
+             [](char c) { Serial2.write(static_cast<uint8_t>(c)); });
     const uint32_t now = millis();
     for (int n = Serial2.available(); n > 0; --n) {
         switch (parser.feed(static_cast<char>(Serial2.read()))) {
@@ -74,12 +81,11 @@ void send(const char* body) {
     if (!started) return;
     char buf[96];
     const size_t n = formatSentence(buf, sizeof(buf), body);
-    // Never wait: a sentence that doesn't fit the transmit FIFO now is
-    // skipped (the model is resent every 2 s anyway).
-    if (n && Serial2.availableForWrite() >= static_cast<int>(n)) {
-        Serial2.write(buf, n);
-        ++sent;
-    }
+    // Queued, then fed out by service() as the FIFO has room: never waits.
+    // Waiting for availableForWrite() to cover the whole sentence never sent
+    // anything (it says 1 or 0, v0.24.0). One still going out means this one
+    // is skipped (the model is resent every 2 s anyway).
+    if (tx.start(buf, n)) ++sent;
 }
 
 void printStats() {
