@@ -348,6 +348,15 @@ drive would take (`src/drive_timing.h`; HDDSynthPro's
 `docs/hddsynth-head-position-brief.md`). The `s` stats show `heads=` (how
 many targets have arrived) and `sent=` (the `$HDM` replies).
 
+**SynthMinder (v0.25.0):** the companion app's queries and commands
+(`$HDQ`, `$HDC`; see [Protocol](#protocol)) are also answered when they
+arrive on the link, and the replies go back on pin 4. The IDE Synth Bay
+relays them from [SynthMinder](https://github.com/MaverickUK/SynthMinder),
+a DOS program that shows and changes the volume, balance and pack from the
+PC the Bay is fitted to. Both wires are needed. The `s` stats show
+`commands=` (how many arrived), `sent=` and `skipped=` (sentences that didn't
+fit the 2 KB transmit queue).
+
 To try it without an HDDSynthPro: with `SIMULATION_MODE` on, one simulated
 burst in three becomes a longer sequential spell. Or connect a 3.3 V
 USB-serial adapter's TX to J6 pin 3 (and GND to pin 2) and paste lines such

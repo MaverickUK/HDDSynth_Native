@@ -476,23 +476,28 @@ void startStress() {
     sd::stats() = sd::Stats{};
 }
 
-// ---- companion app (USB) -------------------------------------------------------
+// ---- companion app (USB) and SynthMinder (the link) ----------------------------
 // The app's '$' sentences share the USB serial console with the single-key
-// commands below (host_protocol.h has the protocol).
+// commands below (host_protocol.h has the protocol). The same queries and
+// commands arrive on the HDDSynthPro link, relayed from SynthMinder (a DOS
+// program); each is answered where it came from.
+
+// Where a command's replies go: usbhost::send or hddlink::reply.
+using ReplyTo = void (*)(const char* body);
 
 uint8_t toPercent(float v) { return static_cast<uint8_t>(lroundf(v * 100)); }
 
-void sendStatus() {
+void sendStatus(ReplyTo send = usbhost::send) {
     char body[96];
     snprintf(body, sizeof(body), "HDS,1,%s,%s,%d,%d,%u,%u,%d", FIRMWARE_VERSION, stateName(state), packNumber, packCount,
              toPercent(settings.volume), toPercent(settings.balance), power::supercapMillivolts());
-    usbhost::send(body);
+    send(body);
 }
 
 // One $HDP per pack, with pack.json's NAME where there is one, and whether
 // it's recorded (R: WAVs) or modelled (M: drive.json). A few small SD reads:
 // fine while the rings hold ~1 s.
-void sendPackList() {
+void sendPackList(ReplyTo send) {
     static char json[1024];
     int count = 0;
     char folder[64];
@@ -510,42 +515,42 @@ void sendPackList() {
         const char kind = sd::fileExists(p) ? 'M' : 'R';
         char body[112];
         snprintf(body, sizeof(body), "HDP,1,%d,%d,%s,%s,%c", i, count, safeFolder, safeName, kind);
-        usbhost::send(body);
+        send(body);
     }
 }
 
-void ack(HostCommandType t, const char* reason) {
+void ack(ReplyTo send, HostCommandType t, const char* reason) {
     char body[48];
     snprintf(body, sizeof(body), "HDK,1,%s,%s,%s", hostCommandName(t), reason[0] ? "ERR" : "OK", reason);
-    usbhost::send(body);
+    send(body);
 }
 
-void runHostCommand(const HostCommand& cmd) {
+void runHostCommand(const HostCommand& cmd, ReplyTo send) {
     switch (cmd.type) {
-        case HostCommandType::Status: sendStatus(); break;
-        case HostCommandType::Packs: sendPackList(); break;
+        case HostCommandType::Status: sendStatus(send); break;
+        case HostCommandType::Packs: sendPackList(send); break;
         case HostCommandType::Volume:
             // As if turned on the encoder: saving and the OLED's volume
             // screen follow settings.volume.
             settings.volume = cmd.value / 100.0f;
-            ack(cmd.type, "");
+            ack(send, cmd.type, "");
             break;
         case HostCommandType::Balance:
             settings.balance = cmd.value / 100.0f;
-            ack(cmd.type, "");
+            ack(send, cmd.type, "");
             break;
         case HostCommandType::Model: {
             char body[64];
             modelBody(body, sizeof(body));
-            usbhost::send(body);
+            send(body);
             break;
         }
         case HostCommandType::Pack:
-            if (state != State::Run && state != State::Standby) ack(cmd.type, "busy");
-            else if (settings.demoMode) ack(cmd.type, "demo");
-            else if (static_cast<int>(cmd.value) >= packCount) ack(cmd.type, "range");
+            if (state != State::Run && state != State::Standby) ack(send, cmd.type, "busy");
+            else if (settings.demoMode) ack(send, cmd.type, "demo");
+            else if (static_cast<int>(cmd.value) >= packCount) ack(send, cmd.type, "range");
             else {
-                ack(cmd.type, "");  // before the change, which takes a second or so
+                ack(send, cmd.type, "");  // before the change, which takes a second or so
                 changePack(/*spinUp*/ state == State::Standby, static_cast<int>(cmd.value));
             }
             break;
@@ -579,7 +584,7 @@ void handleSerial() {
         if (c == '$' || lines.inLine()) {
             HostCommand cmd;
             if (lines.feed(c) == LineAssembler::Result::Line && usbhost::handleLine(lines.line(), lines.length(), cmd)) {
-                runHostCommand(cmd);
+                runHostCommand(cmd, usbhost::send);
             }
             continue;
         }
@@ -1287,6 +1292,7 @@ void loop() {
     checkCore1();
     handleSerial();
     hddlink::service();
+    for (HostCommand cmd; hddlink::takeCommand(cmd);) runHostCommand(cmd, hddlink::reply);
     serviceModelReply();
 
     switch (state) {
