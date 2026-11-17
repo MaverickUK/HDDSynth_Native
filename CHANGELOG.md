@@ -25,6 +25,9 @@ release with its UF2 on the
   the heap, only with the link on) instead of 0.24.1's one-sentence
   `tx_drip.h`, so a pack list of several lines can go out too.
 
+### Changed
+- **The pack list (`$HDQ,1,PACKS`) is kept, not read from the card on every request.** It took about 900 ms for 12 packs: `packByIndex()` walks `/samples` twice per pack, and each pack's `pack.json` and `drive.json` were read again each time, longer than IDE Synth Bay's relay waited for SynthMinder (found on the Evesham, 17 Nov 2026). Now one walk (`sd::nextPackName`, now in `sd_streamer.h`) builds the list when the synth first runs, and again only after the card has been remounted (`sd::stats().recoveries`): USB drive mode reboots the board, so the card can't change otherwise. Up to 64 packs. Not yet run on the board.
+
 ## [0.24.1] - 2026-11-17
 
 ### Fixed

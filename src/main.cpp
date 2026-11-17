@@ -494,27 +494,52 @@ void sendStatus(ReplyTo send = usbhost::send) {
     send(body);
 }
 
-// One $HDP per pack, with pack.json's NAME where there is one, and whether
-// it's recorded (R: WAVs) or modelled (M: drive.json). A few small SD reads:
-// fine while the rings hold ~1 s.
-void sendPackList(ReplyTo send) {
+// The pack list for $HDP: each pack's folder, pack.json's NAME (or the
+// folder) and whether it's recorded (R: WAVs) or modelled (M: drive.json),
+// 32 characters of each name. Read from the card in one walk of /samples and
+// kept: listing it card-first on every request took about 900 ms for 12 packs
+// (packByIndex walks the folder twice per pack), longer than HDDSynthPro's
+// relay waited for SynthMinder. Built the first time the synth runs (or is
+// asked), and again only after the card has been remounted: the card can't
+// change otherwise (USB drive mode reboots the board).
+struct PackListEntry {
+    char folder[33];
+    char name[33];
+    char kind;
+};
+constexpr int PACK_LIST_MAX = 64;
+PackListEntry packList[PACK_LIST_MAX];
+int packListCount = -1;  // -1: not built yet
+uint32_t packListRecoveries = 0;
+
+void buildPackList() {
     static char json[1024];
-    int count = 0;
-    char folder[64];
-    for (int i = 0; sd::packByIndex(i, folder, sizeof(folder), count) && i < count; ++i) {
+    packListCount = 0;
+    packListRecoveries = sd::stats().recoveries;
+    char folder[64] = "";
+    while (packListCount < PACK_LIST_MAX && sd::nextPackName(folder, folder, sizeof(folder))) {
+        PackListEntry& e = packList[packListCount++];
         char p[128];
         snprintf(p, sizeof(p), "/samples/%s/pack.json", folder);
         PackInfo info;
         size_t len = 0;
         if (sd::readTextFile(p, json, sizeof(json), len)) parsePackJson(json, info);
-        // 32 characters of each keeps the sentence a sensible length.
-        char safeFolder[33], safeName[33];
-        sanitiseName(folder, safeFolder, sizeof(safeFolder));
-        sanitiseName(info.name[0] ? info.name : folder, safeName, sizeof(safeName));
+        sanitiseName(folder, e.folder, sizeof(e.folder));
+        sanitiseName(info.name[0] ? info.name : folder, e.name, sizeof(e.name));
         snprintf(p, sizeof(p), "/samples/%s/drive.json", folder);
-        const char kind = sd::fileExists(p) ? 'M' : 'R';
+        e.kind = sd::fileExists(p) ? 'M' : 'R';
+    }
+}
+
+bool packListStale() { return packListCount < 0 || sd::stats().recoveries != packListRecoveries; }
+
+// One $HDP per pack, from the list above.
+void sendPackList(ReplyTo send) {
+    if (packListStale()) buildPackList();
+    for (int i = 0; i < packListCount; ++i) {
         char body[112];
-        snprintf(body, sizeof(body), "HDP,1,%d,%d,%s,%s,%c", i, count, safeFolder, safeName, kind);
+        snprintf(body, sizeof(body), "HDP,1,%d,%d,%.32s,%.32s,%c", i, packListCount, packList[i].folder, packList[i].name,
+                 packList[i].kind);
         send(body);
     }
 }
@@ -1164,6 +1189,7 @@ void startSpinup() {
 }
 
 void enterRun() {
+    if (packListCount < 0) buildPackList();  // once, so the first $HDQ,1,PACKS answers at once
     sd::closeStream(streamSpinup);
     if (modelled) {
         if (!audio::isPlaying(VOICE_DRIVE)) startDrive(/*atSpeed*/ true);  // a pack change: no spin-up

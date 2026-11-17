@@ -60,6 +60,10 @@ bool fileExists(const char* path);
 bool choosePack(const char* preferred, char* out, size_t outLen);
 // Position of `name` in the sorted list, or -1.
 int packIndex(const char* name);
+// The pack sorting straight after `after` ("" for the first): false after the
+// last. One walk of /samples per call; listing every pack this way is one
+// walk per pack, not packByIndex()'s two.
+bool nextPackName(const char* after, char* out, size_t outLen);
 // The pack at `index` (wrapping), and how many packs there are.
 bool packByIndex(int index, char* out, size_t outLen, int& count);
 
