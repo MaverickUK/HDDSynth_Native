@@ -1,5 +1,8 @@
 # HDDSynth Native
 
+[![Build and test](https://github.com/MaverickUK/HDDSynth_Native/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/MaverickUK/HDDSynth_Native/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/MaverickUK/HDDSynth_Native?include_prereleases&sort=semver)](https://github.com/MaverickUK/HDDSynth_Native/releases)
+
 Native C++ firmware for the [HDD Synth](https://github.com/MaverickUK/HDDSynth) MK5 board (RP2354A), replacing the CircuitPython firmware. Licensed under GPLv3, like the HDD Synth software.
 
 ## Status
