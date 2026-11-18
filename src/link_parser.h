@@ -17,12 +17,17 @@
 // total sectors); op R/W/-; sectors, the command's length. Sent at most
 // every 2 ms, always the latest command (HDDSynthPro's
 // docs/hddsynth-head-position-brief.md).
+//
+// The companion app's queries and commands ($HDQ, $HDC; host_protocol.h)
+// arrive on the link too: HDDSynthPro relays them from SynthMinder, the DOS
+// program, and the replies go back on the link's TX.
 // Platform independent (unit tested natively).
 #pragma once
 
 #include <stddef.h>
 #include <stdint.h>
 
+#include "host_protocol.h"
 #include "sentence.h"
 
 enum class ActivityClass : uint8_t { Idle, Sequential, Random };
@@ -54,12 +59,13 @@ class LinkParser {
 public:
     static constexpr size_t MAX_LINE = SENTENCE_MAX_LINE;  // longer lines are dropped (without the line ending)
 
-    enum class Got : uint8_t { Nothing, Activity, Head };
-    // Feed one byte. Activity or Head when it completes a valid $HDA (see
-    // state()) or $HDE (see head()).
+    enum class Got : uint8_t { Nothing, Activity, Head, Command };
+    // Feed one byte. Activity, Head or Command when it completes a valid
+    // $HDA (see state()), $HDE (see head()) or $HDQ/$HDC (see command()).
     Got feed(char c);
     const LinkState& state() const { return state_; }
     const HeadTarget& head() const { return head_; }
+    const HostCommand& command() const { return command_; }
     uint32_t valid() const { return valid_; }
     uint32_t rejected() const { return rejected_; }  // complete lines that failed (noise without a '$' isn't counted)
 
@@ -67,6 +73,7 @@ private:
     LineAssembler lines_;
     LinkState state_;
     HeadTarget head_;
+    HostCommand command_;
     uint32_t valid_ = 0;
     uint32_t rejected_ = 0;
 };

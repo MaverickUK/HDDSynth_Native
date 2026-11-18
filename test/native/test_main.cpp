@@ -32,12 +32,12 @@
 #include "levels_format.h"
 #include "host_protocol.h"
 #include "link_parser.h"
-#include "tx_drip.h"
 #include "persist_format.h"
 #include "powerlog_format.h"
 #include "quadrature.h"
 #include "ring_buffer.h"
 #include "sentence.h"
+#include "tx_queue.h"
 #include "wav.h"
 
 static int failures = 0;
@@ -1024,36 +1024,29 @@ static int feedAll(LinkParser& p, const char* text) {
 // The $HDM reply: fed to a FIFO that takes a few bytes per loop pass, it all
 // goes out in order, never more at once than there's room for (v0.24.0 sent
 // nothing: it waited for room for the whole sentence, which Arduino-Pico's
-// availableForWrite() never reports).
+// availableForWrite() never reports). TxQueue (v0.25.0) replaced v0.24.1's
+// one-sentence TxDrip, so replies of several lines can wait too.
 TEST(link_reply_drips_into_the_fifo) {
-    TxDrip tx;
+    char storage[64];
+    TxQueue tx(storage, sizeof(storage));
     const char model[] = "$HDM,2,V,5400,6000,190,20,30,5,100,1*4F\r\n";
     const size_t n = sizeof(model) - 1;
     CHECK(n > 32);  // longer than the UART's hardware FIFO
-    CHECK(tx.start(model, n));
-    CHECK(tx.busy());
-    CHECK(!tx.start("$HDM,2,-*00\r\n", 13));  // one at a time
+    CHECK(tx.push(model, n));
+    CHECK(!tx.push(model, n));  // no room for a second: none of it goes in
     std::string out;
     int passes = 0;
-    while (tx.busy() && passes < 100) {
+    while (!tx.empty() && passes < 100) {
         int room = 5;  // five bytes drain per pass, say
-        size_t w = tx.drain([&] { return room > 0; }, [&](char c) { out += c; --room; });
-        CHECK(w <= 5);
+        while (room > 0 && !tx.empty()) {
+            out += tx.pop();
+            --room;
+        }
         ++passes;
     }
     CHECK_EQ(out.size(), n);
     CHECK(out == model);
-    CHECK(!tx.busy());
-    // No room: nothing written, still waiting.
-    CHECK(tx.start("$HDM,2,-*00\r\n", 13));
-    CHECK_EQ(tx.drain([] { return false; }, [](char) {}), 0u);
-    CHECK(tx.busy());
-    // Too long or empty: refused.
-    TxDrip t2;
-    std::string big(TxDrip::CAPACITY + 1, 'x');
-    CHECK(!t2.start(big.data(), big.size()));
-    CHECK(!t2.start("", 0));
-    CHECK(!t2.busy());
+    CHECK_EQ(passes, int((n + 4) / 5));
 }
 
 TEST(link_known_answers) {
@@ -1122,16 +1115,17 @@ TEST(link_parser_assembles_lines) {
 
 TEST(link_parser_drops_long_lines) {
     LinkParser p;
+    const size_t max = SENTENCE_MAX_LINE;
     std::string longLine = "$HDA,1,1,S,R";
-    while (longLine.size() < 81) longLine += ",x";
-    longLine.resize(81);  // 81 characters before the line ending
+    while (longLine.size() < max + 1) longLine += ",x";
+    longLine.resize(max + 1);  // one character too many before the line ending
     CHECK_EQ(feedAll(p, (longLine + "\r\n").c_str()), 0);
     CHECK_EQ(p.rejected(), 1u);
     CHECK_EQ(feedAll(p, "$HDA,1,1,S,R*4C\r\n"), 1);  // and the next one is fine
-    // Exactly 80 (with extra fields and a correct checksum) is accepted.
+    // Exactly the limit (with extra fields and a correct checksum) is accepted.
     std::string body = "HDA,1,1,S,R";
-    while (body.size() < 76) body += ",y";
-    body.resize(76);  // '$' + 76 + "*hh" = 80
+    while (body.size() < max - 4) body += ",y";
+    body.resize(max - 4);  // '$' + body + "*hh" = max
     unsigned sum = 0;
     for (char c : body) sum ^= static_cast<unsigned char>(c);
     char tail[8];
@@ -1240,7 +1234,7 @@ TEST(sentence_line_assembler) {
     feed("$HDQ,1$HDQ,1,PACKS*26\n");  // cut off by a '$'
     CHECK_EQ(dropped, 1);
     CHECK(lines.size() == 3 && lines[2] == "$HDQ,1,PACKS*26");
-    std::string longLine(81, 'x');
+    std::string longLine(SENTENCE_MAX_LINE, 'x');  // with the '$', one too long
     feed(("$" + longLine + "\n").c_str());
     CHECK_EQ(dropped, 2);
     CHECK_EQ(lines.size(), 3u);
@@ -1574,6 +1568,54 @@ TEST(host_model_query) {
     CHECK(parseHostCommand(e.data(), e.size(), c) == HostParse::NotCommand);
 }
 
+// SynthMinder's queries and commands arrive on the link, relayed by HDDSynthPro.
+TEST(link_parser_yields_host_commands) {
+    LinkParser p;
+    std::string stream = sentenceLine("HDQ,1,STATUS") + "\r\n" + sentenceLine("HDA,1,1,R,R") + "\r\n" +
+                         sentenceLine("HDC,1,VOL,55") + "\r\n" + sentenceLine("HDC,1,VOL,101") + "\r\n";
+    std::vector<HostCommand> got;
+    int act = 0;
+    for (char c : stream) {
+        const LinkParser::Got g = p.feed(c);
+        if (g == LinkParser::Got::Command) got.push_back(p.command());
+        if (g == LinkParser::Got::Activity) ++act;
+    }
+    CHECK_EQ(int(got.size()), 2);
+    CHECK(got[0].type == HostCommandType::Status);
+    CHECK(got[1].type == HostCommandType::Volume);
+    CHECK_EQ(int(got[1].value), 55);
+    CHECK_EQ(act, 1);
+    CHECK_EQ(p.valid(), 3u);
+    CHECK_EQ(p.rejected(), 1u);  // VOL 101 is out of range
+}
+
+// The longest pack line the synth sends fits a line, so HDDSynthPro can relay it.
+TEST(longest_pack_line_fits) {
+    const std::string name(32, 'N');
+    const std::string l = sentenceLine(("HDP,1,99,99," + name + "," + name + ",M").c_str());
+    CHECK(l.size() <= SENTENCE_MAX_LINE);
+    LineAssembler a;
+    LineAssembler::Result r = LineAssembler::Result::None;
+    for (char c : l + "\r\n") r = a.feed(c);
+    CHECK(r == LineAssembler::Result::Line);
+}
+
+TEST(tx_queue_keeps_sentences_whole) {
+    char storage[10];
+    TxQueue q(storage, sizeof(storage));
+    CHECK(q.empty());
+    CHECK(q.push("abcdef", 6));
+    CHECK(!q.push("ghijk", 5));  // doesn't fit: nothing of it goes in
+    CHECK_EQ(int(q.size()), 6);
+    std::string out;
+    for (int i = 0; i < 4; ++i) out += q.pop();
+    CHECK(out == "abcd");
+    CHECK(q.push("ghijk", 5));  // wraps round the end of the storage
+    CHECK_EQ(int(q.room()), 3);
+    while (!q.empty()) out += q.pop();
+    CHECK(out == "abcdefghijk");
+}
+
 TEST(drive_model_sentence_round_trip) {
     DriveParams p;
     for (size_t i = 0; i < drivePresetCount(); ++i) {
@@ -1765,6 +1807,9 @@ int main(int argc, char** argv) {
     RUN(drive_two_threads_commands_while_rendering);
     RUN(link_head_sentences);
     RUN(host_model_query);
+    RUN(link_parser_yields_host_commands);
+    RUN(longest_pack_line_fits);
+    RUN(tx_queue_keeps_sentences_whole);
     RUN(drive_model_sentence_round_trip);
     RUN(drive_timing_matches_the_engine);
     RUN(drive_timing_rotation_and_transfer);

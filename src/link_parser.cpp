@@ -77,6 +77,12 @@ LinkParser::Got LinkParser::feed(char c) {
         ++valid_;
         return Got::Head;
     }
+    HostCommand cmd;
+    if (parseHostCommand(lines_.line(), lines_.length(), cmd) == HostParse::Command) {
+        command_ = cmd;
+        ++valid_;
+        return Got::Command;
+    }
     ++rejected_;
     return Got::Nothing;
 }

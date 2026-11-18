@@ -264,6 +264,19 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   streams with no underruns, the LED and sample switch); not yet with real link
   lines or HDDSynthPro.
 
+- SynthMinder through the link (v0.25.0): `$HDQ`/`$HDC` arriving on the link
+  (`LinkParser::Got::Command`) queue in `hdd_link` and `loop()` runs them with
+  `runHostCommand(cmd, hddlink::reply)`: the same code as USB, the replies
+  going where the command came from (`ReplyTo`). Everything the link sends
+  waits in `TxQueue` (`tx_queue.h`, host-tested; 2 KB on the heap, only with
+  the link on) and is fed into the 32-byte UART FIFO a byte at a time while
+  `availableForWrite()` says there's room (replacing 0.24.1's one-sentence `TxDrip`): Arduino-Pico's `SerialUART`
+  returns 1 or 0 there, not a count (before 0.24.1, `$HDM` was never sent
+  for that reason). `SENTENCE_MAX_LINE` is 96 so `$HDP` can be relayed;
+  HDDSynthPro copies `sentence.*`. Host-tested only; not yet run with a Bay.
+  Native tests on Windows (MinGW): `-iquote src`, not `-Isrc`, or `<dirent.h>`
+  includes our `src/io.h`; MinGW has no ASan.
+
 - USB companion app (`companion/`, Python + PySide6, its own version; v0.19.0
   firmware): `$` lines on the USB console go to `usb_host.*` (assembled by
   `LineAssembler` in `handleSerial()`, so `-` inside a sentence isn't

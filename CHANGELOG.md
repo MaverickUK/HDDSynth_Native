@@ -6,6 +6,28 @@ follow [Semantic Versioning](https://semver.org). Linked versions have a
 release with its UF2 on the
 [releases page](https://github.com/MaverickUK/HDDSynth_Native/releases).
 
+## [0.25.0] - 2026-11-17
+
+### Added
+- **SynthMinder through the HDDSynthPro link:** the companion app's queries
+  and commands (`$HDQ`, `$HDC`) are answered when they arrive on the link
+  (J6 pin 3) as well as over USB, with the replies sent back on the link's
+  TX (J6 pin 4). The IDE Synth Bay relays them from SynthMinder, the DOS
+  program, so its Synth tab can show and change the volume, balance and
+  pack. Needs `EXPERIMENTAL_HDDSYNTHPRO_SUPPORT`. The `s` stats' link line
+  adds `commands=` and `skipped=`.
+
+### Changed
+- Sentences of up to 96 characters are accepted (80 before), so the longest
+  `$HDP` line (two 32-character names, 85) can be relayed. HDDSynthPro's
+  copy of `sentence.h` takes the same limit.
+- What the link sends waits in a 2 KB queue (`tx_queue.h`, host-tested; on
+  the heap, only with the link on) instead of 0.24.1's one-sentence
+  `tx_drip.h`, so a pack list of several lines can go out too.
+
+### Changed
+- **The pack list (`$HDQ,1,PACKS`) is kept, not read from the card on every request.** It took about 900 ms for 12 packs: `packByIndex()` walks `/samples` twice per pack, and each pack's `pack.json` and `drive.json` were read again each time, longer than IDE Synth Bay's relay waited for SynthMinder (found on the Evesham, 17 Nov 2026). Now one walk (`sd::nextPackName`, now in `sd_streamer.h`) builds the list when the synth first runs, and again only after the card has been remounted (`sd::stats().recoveries`): USB drive mode reboots the board, so the card can't change otherwise. Up to 64 packs. Not yet run on the board.
+
 ## [0.24.1] - 2026-11-17
 
 ### Fixed
