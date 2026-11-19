@@ -34,6 +34,12 @@ function makeEngine(sr) {
   const rnd = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
   const SQRT3 = Math.sqrt(3);
   const noise = () => (rnd() * 2 - 1) * SQRT3;          // unit variance
+  // Each noise band has its own generator, so a band stopping or starting doesn't
+  // change the others' noise, and the control's random numbers (flutter, seeks) don't
+  // depend on how many bands are running.
+  const bSeed = new Uint32Array(NB);
+  for (let i = 0; i < NB; i++) bSeed[i] = (Math.imul(0x9E3779B9, i + 1) >>> 0) || 1;
+  const bandNoise = (i) => { let s = bSeed[i] | 0; s ^= s << 13; s ^= s >>> 17; s ^= s << 5; bSeed[i] = s; return ((s >>> 0) / 4294967296 * 2 - 1) * SQRT3; };
   const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
   const dbToAmp = (db) => Math.pow(10, db / 20);
 
@@ -93,11 +99,29 @@ function makeEngine(sr) {
   // ---- state ----
   let powered = false, state = 'off';           // off | spinup | ready | coast
   let rpm = 0, accel = 0, wander = 0, frNow = 0;
-  let phRot = 0;
+  // Each tone is a phasor (re, im) turned by (tC, tS) every sample: im is the sine.
+  // Four multiplies instead of a sin() per tone per sample. The turn is set at the
+  // control rate, as the speed only changes there anyway.
   const tPh = new Float64Array(MAX_TONES), tCur = new Float64Array(MAX_TONES), tStep = new Float64Array(MAX_TONES);
+  const tRe = new Float64Array(MAX_TONES), tIm = new Float64Array(MAX_TONES), tC = new Float64Array(MAX_TONES).fill(1), tS = new Float64Array(MAX_TONES);
+  // Each tone's body gain, kept until the speed changes: it's the dearest part of the
+  // control (a log and a power per tone on a fitted drive's curve).
+  const tBodyF = new Float64Array(MAX_TONES).fill(-1), tBody = new Float64Array(MAX_TONES);
+  const tOn = new Uint8Array(MAX_TONES), tList = new Uint8Array(MAX_TONES);   // the tones sounding now
+  let nList = 0;
+  let rotRe = 1, rotIm = 0, rotC = 1, rotS = 0;  // the rotation itself (the wobble), as a phasor
   const bands = []; for (let i = 0; i < NB; i++) bands.push(svf());
   const nCur = new Float64Array(NB), nStep = new Float64Array(NB);
+  // The bands' tuning and body gain, kept until the speed changes (nShift: their shift then).
+  let nShift = -1;
+  const bandBody = new Float64Array(NB), nNorm = new Float64Array(NB);
+  const bList = new Uint8Array(NB), bOn = new Uint8Array(NB);   // the bands sounding now
+  let nbList = 0;
+  let armLive = false;                           // the arm's modes are still ringing
+  let master = 1, wobK = 0;
   let ctrlCount = 0;
+  // Work done, for the cost estimate (bench): per-sample and per-control-tick counts.
+  const work = { samples: 0, tones: 0, bands: 0, stages: 0, ticks: 0, bodies: 0, retunes: 0, exps: 0 };
 
   function setParams(drive) {
     d = drive;
@@ -108,8 +132,11 @@ function makeEngine(sr) {
       tOrder[i] = tones[i].order; tAmp[i] = dbToAmp(tones[i].db); tMotor[i] = tones[i].motor ? 1 : 0;
       // Random start phases (no click of aligned sines), only for new tones: an edit
       // while playing keeps the others running smoothly (their levels ramp).
-      if (i >= had) { tPh[i] = rnd(); tCur[i] = 0; }
+      if (i >= had) { tPh[i] = rnd(); tCur[i] = 0; tRe[i] = Math.cos(TAU * tPh[i]); tIm[i] = Math.sin(TAU * tPh[i]); }
+      tBodyF[i] = -1;                                  // the body may have changed: work it out again
+      setTurn(i);
     }
+    for (let i = nTones; i < had; i++) { tCur[i] = 0; tStep[i] = 0; }
     const sp = drive.spindle || {};
     setFlutter(sp.flutterDb, sp.flutterHz);
     const b = drive.body || [];
@@ -120,6 +147,9 @@ function makeEngine(sr) {
     for (let i = 0; i < nCurve; i++) { cLogHz[i] = Math.log(c[i].hz); cDb[i] = c[i].db; }
     const nb = (drive.noise && drive.noise.db) || [];
     for (let i = 0; i < NB; i++) nRms[i] = i < nb.length ? dbToAmp(nb[i]) : 0;
+    nShift = -1;                                       // retune the bands at the next control
+    master = drive.master == null ? 1 : drive.master;
+    wobK = (sp.wobble || 0) * 0.5;
 
     act = drive.actuator || null;
     const am = (act && act.modes) || [];
@@ -220,6 +250,7 @@ function makeEngine(sr) {
     // move longer than a full stroke doesn't push harder still).
     const A = Math.pow(Math.min(1, T / Tfull), act.levelExp == null ? 0.5 : act.levelExp) * (db ? dbToAmp(db) : 1);
     sk = { x0: headX, x1: x, T, A, t: 0, n, step: 0, hold: 0 };
+    armLive = true;
     // How long a seek this is among random ones: two random points are further apart
     // than d with probability (1 - d)^2. The grains are in order of length, so this
     // picks short ones for short seeks, as often as the recording had them.
@@ -374,6 +405,9 @@ function makeEngine(sr) {
   // Runs at CTRL_HZ: the spindle speed, then every tone's and band's target level.
   function control() {
     const s = d.spindle, target = s.rpm;
+    // Every tone's phase, kept at the control rate (the speed it ran at since the last
+    // tick), heard or not: a tone left out comes back where it would have been.
+    for (let i = 0; i < nTones; i++) { tPh[i] += tOrder[i] * frNow * ctrlDt; tPh[i] -= Math.floor(tPh[i]); }
     if (powered) {
       if (rpm < target) {
         // Constant torque, less the rising windage drag: reaches full speed in about spinupS.
@@ -397,43 +431,97 @@ function makeEngine(sr) {
     frNow = (rpm / 60) * (1 + (s.jitter || 0) * wander);
 
     const sn = target > 0 ? rpm / target : 0;
+    const nyq = sr * 0.45, fade0 = sr * 0.4;
+    work.ticks++;
+
+    // The noise bands' levels. (Leaving out bands or tones masked by louder sound nearby
+    // was tried, and measured: kept far enough under to be sure they're unheard, it
+    // saved 0-3 of 17 bands and 0-2 of 40 tones. Everything a drive has is heard.)
+    const nz = d.noise || {};
+    const nLaw = Math.pow(sn, nz.speedExp == null ? 2.5 : nz.speedExp);
+    const shift = Math.pow(Math.max(sn, 0.05), nz.follow == null ? 0.5 : nz.follow);
+    if (Math.abs(shift - nShift) > 1e-5 * shift) {   // the speed has changed: retune them
+      nShift = shift;
+      for (let i = 0; i < NB; i++) {
+        const fc = noiseHz[i] * shift;
+        bandBody[i] = 0;
+        if (fc < nyq && nRms[i] > 0) {
+          tuneSvf(bands[i], fc, NOISE_Q);
+          bandBody[i] = body(fc);
+          // A unit-peak band-pass passes pi*fc/(Q*sr) of unit white noise's power.
+          nNorm[i] = 1 / Math.sqrt(Math.PI * fc / (NOISE_Q * sr));
+          work.retunes++; work.bodies++;
+        }
+      }
+    }
+    nbList = 0;
+    for (let i = 0; i < NB; i++) {
+      const g = nRms[i] * nLaw * bandBody[i] * nNorm[i];
+      if (g === 0 && Math.abs(nCur[i]) < 1e-12) { nCur[i] = 0; nStep[i] = 0; }
+      else nStep[i] = (g - nCur[i]) / ctrlEvery;
+      if (nCur[i] !== 0 || nStep[i] !== 0) { bList[nbList++] = i; bOn[i] = 1; }
+      else if (bOn[i]) {
+        // Gone quiet (stopped, or past the top of the range): clear its filter, so it
+        // comes back from silence. Its old state, retuned meanwhile, can make a thump.
+        bOn[i] = 0; const b = bands[i]; b.ic1 = 0; b.ic2 = 0; b.bp = 0;
+      }
+    }
+
     const mech = Math.pow(sn, s.speedExp == null ? 2 : s.speedExp);
     // Motor tones follow the drive current: louder while accelerating, gone once unpowered.
     // They also grow with speed (as the recordings' spin-ups do: they start 10-25 dB
     // under the idle). At full level from 10% speed, they were a loud whirr.
     const motor = powered ? (1 + (dbToAmp(s.motorBoostDb || 0) - 1) * accel) * sn : 0;
-    const nyq = sr * 0.45, fade0 = sr * 0.4;
+    // The body is worked out at the steady speed, without the jitter (0.05%): it moves
+    // the tones' pitch, not their level.
+    const fBase = rpm / 60;
+    nList = 0;
     for (let i = 0; i < nTones; i++) {
       const f = tOrder[i] * frNow;
       let a = 0;
       if (f > 1 && f < nyq) {
-        a = tAmp[i] * (tMotor[i] ? motor : mech) * body(f);
+        const fb = tOrder[i] * fBase;
+        if (Math.abs(fb - tBodyF[i]) > 1e-4 * fb) { tBodyF[i] = fb; tBody[i] = body(fb); work.bodies++; }
+        a = tAmp[i] * (tMotor[i] ? motor : mech) * tBody[i];
         if (f > fade0) a *= (nyq - f) / (nyq - fade0);
         // (exp(-k^2) keeps the tone's average power where it was.)
         if (flutterK) {
           tFl[i] += (noise() - tFl[i]) * (1 - flA);
           tFl2[i] += (tFl[i] - tFl2[i]) * (1 - flA);
           a *= Math.exp(flutterK * tFl2[i] * flNorm - flutterK * flutterK);
+          work.exps++;
         }
       }
-      tStep[i] = (a - tCur[i]) / ctrlEvery;
+      // Only the tones sounding run per sample (a motor tone is silent unpowered, a tone
+      // past the top of the range is gone).
+      if (a === 0 && Math.abs(tCur[i]) < 1e-12) { tCur[i] = 0; tStep[i] = 0; }
+      else tStep[i] = (a - tCur[i]) / ctrlEvery;
+      if (tCur[i] !== 0 || tStep[i] !== 0) {
+        // A tone coming back joins at the phase it would have had: no click.
+        if (!tOn[i]) { tOn[i] = 1; tRe[i] = Math.cos(TAU * tPh[i]); tIm[i] = Math.sin(TAU * tPh[i]); }
+        tList[nList++] = i; setTurn(i);
+      } else tOn[i] = 0;
     }
-    const nz = d.noise || {};
-    const nLaw = Math.pow(sn, nz.speedExp == null ? 2.5 : nz.speedExp);
-    const shift = Math.pow(Math.max(sn, 0.05), nz.follow == null ? 0.5 : nz.follow);
-    for (let i = 0; i < NB; i++) {
-      const fc = noiseHz[i] * shift;
-      let g = 0;
-      if (fc < nyq && nRms[i] > 0) {
-        tuneSvf(bands[i], fc, NOISE_Q);
-        // A unit-peak band-pass passes pi*fc/(Q*sr) of unit white noise's power.
-        g = nRms[i] * nLaw * body(fc) / Math.sqrt(Math.PI * fc / (NOISE_Q * sr));
+    { const w = TAU * frNow * dt; rotC = Math.cos(w); rotS = Math.sin(w); }
+    // Renormalise the phasors now and then: rounding slowly changes their size.
+    if ((work.ticks & 63) === 0) {
+      for (let i = 0; i < nTones; i++) { const m = 1.5 - 0.5 * (tRe[i] * tRe[i] + tIm[i] * tIm[i]); tRe[i] *= m; tIm[i] *= m; }
+      const m = 1.5 - 0.5 * (rotRe * rotRe + rotIm * rotIm); rotRe *= m; rotIm *= m;
+    }
+    // The arm's modes stop once the seek is over and they've rung down to nothing.
+    if (armLive && !sk) {
+      let e = 0;
+      for (let i = 0; i < nModes; i++) e = Math.max(e, Math.abs(modes[i].ic1), Math.abs(modes[i].ic2), Math.abs(modes2[i].ic1), Math.abs(modes2[i].ic2));
+      if (e < 1e-7) {
+        armLive = false;
+        for (let i = 0; i < nModes; i++) for (const m of [modes[i], modes2[i]]) { m.ic1 = 0; m.ic2 = 0; m.bp = 0; }
       }
-      nStep[i] = (g - nCur[i]) / ctrlEvery;
     }
     runScript();
     if (state === 'ready' && scr < 0) workload();
   }
+
+  function setTurn(i) { const w = TAU * tOrder[i] * frNow * dt; tC[i] = Math.cos(w); tS[i] = Math.sin(w); }
 
   function power(on) {
     if (on === powered) return;
@@ -454,37 +542,48 @@ function makeEngine(sr) {
   let peak = 0, sq = 0, n = 0;
   function process(out, len) {
     for (let j = 0; j < len; j++) {
-      if (++ctrlCount >= ctrlEvery) { ctrlCount = 0; control(); }
-      phRot += frNow * dt; if (phRot >= 1) phRot -= 1;
-      const wob = 1 + (d.spindle.wobble || 0) * 0.5 * Math.sin(TAU * phRot);
+      if (++ctrlCount >= ctrlEvery) {
+        ctrlCount = 0; control();
+        work.tones += nList * ctrlEvery; work.bands += nbList * ctrlEvery;
+      }
+      work.samples++;
+      let wob = 1;
+      if (wobK) {
+        const re = rotRe * rotC - rotIm * rotS; rotIm = rotRe * rotS + rotIm * rotC; rotRe = re;
+        wob = 1 + wobK * rotIm;
+      }
 
       let tones = 0;
-      for (let i = 0; i < nTones; i++) {
-        tPh[i] += tOrder[i] * frNow * dt; tPh[i] -= Math.floor(tPh[i]);
+      for (let k = 0; k < nList; k++) {
+        const i = tList[k], re = tRe[i], im = tIm[i];
+        const ni = re * tS[i] + im * tC[i];
+        tRe[i] = re * tC[i] - im * tS[i]; tIm[i] = ni;
         tCur[i] += tStep[i];
-        tones += tCur[i] * Math.sin(TAU * tPh[i]);
+        tones += tCur[i] * ni;
       }
       let air = 0;
-      for (let i = 0; i < NB; i++) {
+      for (let k = 0; k < nbList; k++) {
+        const i = bList[k], b = bands[i];
         nCur[i] += nStep[i];
-        if (nCur[i] === 0 && nStep[i] === 0) continue;
-        const b = bands[i];
-        runSvf(b, noise());
+        runSvf(b, bandNoise(i));
         air += b.bp * b.k * nCur[i];               // k * bp: unit gain at the centre
       }
       let arm = 0;
       if (nModes) {
         const e = seekSample();
-        for (let i = 0; i < nModes; i++) {
-          const m = modes[i], m2 = modes2[i];
-          runSvf(m, e); runSvf(m2, m.bp * m.k);
-          arm += m2.bp * m2.k * mGain[i];
+        if (armLive) {
+          for (let i = 0; i < nModes; i++) {
+            const m = modes[i], m2 = modes2[i];
+            runSvf(m, e); runSvf(m2, m.bp * m.k);
+            arm += m2.bp * m2.k * mGain[i];
+          }
+          arm *= seekAmp;
+          work.stages += 2 * nModes;
         }
-        arm *= seekAmp;
       } else if (act) seekSample();                 // no modes: the head still moves
       // An equal-power crossfade, so a half-and-half mix isn't quieter than either.
       if (grainMix > 0) arm = arm * gSynthGain + grainSample() * gGrainGain;
-      let y = (tones * wob + air + arm) * (d.master == null ? 1 : d.master);
+      let y = (tones * wob + air + arm) * master;
       y = clamp(y, -1, 1);
       out[j] = y;
       const ay = y < 0 ? -y : y; if (ay > peak) peak = ay;
@@ -498,7 +597,10 @@ function makeEngine(sr) {
     return t;
   }
 
-  return { setParams, handle, process, telemetry, body, NOISE_HZ: Array.from(noiseHz), NOISE_Q, MAX_TONES, MAX_BODY, MAX_CURVE, MAX_MODES, MAX_EVENTS };
+  // The work done since the last call (for bench.js's cost estimate).
+  function workDone() { const w = { ...work }; for (const k in work) work[k] = 0; return w; }
+
+  return { setParams, handle, process, telemetry, workDone, body, NOISE_HZ: Array.from(noiseHz), NOISE_Q, MAX_TONES, MAX_BODY, MAX_CURVE, MAX_MODES, MAX_EVENTS };
 }
 
 if (typeof module !== 'undefined') module.exports = { makeEngine };

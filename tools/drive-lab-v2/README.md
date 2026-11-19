@@ -206,6 +206,8 @@ node render.js drive.json OUT_DIR [rate]          # render spinup/idle/access/sp
 node score.js SAMPLES_DIR [OUT_DIR] [--pack NAME] # fit, render and score every pack;
                                                   # OUT_DIR gets A/B WAVs to listen to
 node grains.js PACK_DIR drive.json [--max N]      # optional: add recorded seeks to a drive
+node bench.js [--rate N] [--ref OTHER/engine.js]  # what the engine costs; with --ref, whether
+                                                  # a change to it can be heard (see below)
 ```
 
 The modules have no Node dependencies, apart from reading files (`fitPack()`,
@@ -298,21 +300,70 @@ How fitting works:
 6. **Head events** (`head_fit.js`): from spinup.wav and spindown.wav, played by
    the fitted actuator (see Head events above).
 
+## What it costs (`bench.js`)
+
+Before the firmware port, the engine was checked for work that can't be heard.
+The question for each part: does it change the sound? `bench.js --ref` renders
+spin-up, idle, random and sequential reads, bursts and spindown through two
+versions of the engine and subtracts them. Both draw the same random numbers,
+so what's left is exactly what changed. It's measured against the drive's own
+sound in each third-octave band.
+
+**Most of the cost was work repeated for nothing.** These changes are exact:
+the difference stays 25 dB or more under the drive's sound everywhere, and
+usually 40-50 dB under.
+- **The control step redid everything a thousand times a second.** It worked
+  out every tone's and band's body response and retuned every noise band. On
+  the board that cost about as much as all the per-sample work together. It's
+  now redone only when the speed changes (so not at all at steady speed). The
+  body is worked out without the 0.05% speed jitter, which moves the pitch, not
+  the level.
+- **Each tone is a phasor:** four multiplies a sample instead of a `sin()`.
+- **The arm's filters stop** once a seek has rung down to nothing (they ran
+  all the time).
+- **Only the tones and bands that are sounding run** (a motor tone is silent
+  unpowered).
+- Each noise band has its own random generator, so the control's random
+  numbers (flutter, seeks) don't depend on which bands are running.
+
+**Almost nothing a drive has is inaudible.** Leaving out tones and noise bands
+masked by louder sound nearby was tried. Kept far enough under to be sure they
+can't be heard (18 dB for a band, 26 dB for a tone), it saved 0-3 of 17 bands
+and 0-2 of 40 tones, so it was taken out again. The fitter only adds what the
+recording has.
+
+Estimated share of core 1 on the RP2350, busy with random seeks, averaged over
+the 15 drives (`bench.js`; calibrated so v1 matches its measurement on the
+board):
+
+| | before | after | v1 |
+|---|---|---|---|
+| 32 kHz | ~123% | ~82% | ~25% |
+| 16 kHz | ~72% | ~43% | ~12% |
+
+In the browser it takes about half the time it did. What's left is the sound
+itself: about 40 tones and 17 noise bands every sample. So for the port:
+- **Run modelled drives at 16 kHz** (or 22.05). Every pack is recorded at 16
+  kHz, so a fitted drive has nothing above 8 kHz to lose. 32 kHz doesn't fit.
+- In C++, a cheap `exp()` for the flutter, and updating the flutter and the
+  tones' turns at 250 Hz instead of 1 kHz, would save roughly another tenth.
+- Measure it on the board (`mix_max`) before trusting these numbers.
+
 ## Where it stands
 
 `score.js` against the samples:
 
 | pack | rpm | idle level | idle bands | tones matched | spindown (flat body) | spindown (fitted) | seeks/s real / synth | busy real / synth | seek level | seek spectrum | head events spin-up | head events spindown | head event level |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Mark_IBM | 7267 | -1.2 dB | 1.9 dB | 100% | 10.0 dB | 5.8 dB | 64.5 / 55.6 | 33% / 34% | +0.7 dB | 7.4 dB | 5/5 | 5/5 | 6.4 dB |
-| Mark_Original | 7205 | -0.4 dB | 1.3 dB | 100% | 12.1 dB | 6.4 dB | 31.5 / 28.1 | 28% / 30% | 0.0 dB | 5.7 dB | 11/12 | 3/4 | 7.6 dB |
-| Mark_Toaster | 7208 | -1.2 dB | 2.0 dB | 93% | 5.4 dB | 5.6 dB | 12.7 / 11.2 | 46% / 41% | -0.7 dB | 3.5 dB | 4/7 | 9/14 | 7.7 dB |
-| PB_IBM_Ultrastar | 10003 | -1.8 dB | 3.4 dB | 76% | 10.5 dB | 5.4 dB | 8.6 / 5.6 | 70% / 76% | +0.6 dB | 4.7 dB | 30/38 | 4/4 | 5.8 dB |
-| PB_MicroScience612 | 3552 | -1.8 dB | 3.7 dB | 90% | 19.2 dB | 5.8 dB | 12.1 / 15.5 | 28% / 30% | +0.6 dB | 4.7 dB | 35/37 | 2/2 | 3.3 dB |
-| PB_QuantumFireballEX | 5359 | -1.0 dB | 2.3 dB | 82% | 12.5 dB | 5.9 dB | 38.6 / 38.0 | 23% / 29% | +1.1 dB | 3.9 dB | 17/20 | 5/7 | 4.9 dB |
-| PB_QuantumFireballTM | 4500 | -0.3 dB | 2.7 dB | 100% | 8.6 dB | 4.9 dB | 9.1 / 9.7 | 6% / 6% | +0.7 dB | 6.0 dB | 29/33 | 11/12 | 6.6 dB |
-| PB_WD_Caviar2850 | 4502 | -1.3 dB | 3.1 dB | 98% | 10.4 dB | 5.9 dB | 20.1 / 29.0 | 21% / 29% | -0.2 dB | 2.8 dB | 68/74 | 3/5 | 3.6 dB |
-| PB_WD_Raptor | 10004 | -0.4 dB | 1.2 dB | 97% | 6.9 dB | 5.0 dB | 13.5 / 15.2 | 14% / 17% | +0.1 dB | 4.5 dB | 17/18 | 5/8 | 6.7 dB |
+| Mark_IBM | 7267 | -1.4 dB | 1.6 dB | 100% | 10.0 dB | 5.9 dB | 64.5 / 55.6 | 33% / 33% | +0.8 dB | 7.3 dB | 5/5 | 5/5 | 6.8 dB |
+| Mark_Original | 7205 | -0.2 dB | 1.5 dB | 100% | 12.1 dB | 6.3 dB | 31.5 / 30.2 | 28% / 33% | +0.2 dB | 5.6 dB | 10/12 | 3/4 | 8.1 dB |
+| Mark_Toaster | 7208 | -1.1 dB | 2.0 dB | 98% | 5.4 dB | 5.6 dB | 12.7 / 12.4 | 46% / 42% | -0.9 dB | 3.6 dB | 4/7 | 9/14 | 7.2 dB |
+| PB_IBM_Ultrastar | 10003 | -1.4 dB | 3.2 dB | 82% | 10.5 dB | 5.4 dB | 8.6 / 5.8 | 70% / 77% | +0.7 dB | 5.0 dB | 31/38 | 3/4 | 6.2 dB |
+| PB_MicroScience612 | 3552 | -1.3 dB | 3.6 dB | 100% | 19.2 dB | 5.9 dB | 12.1 / 16.1 | 28% / 29% | +0.6 dB | 4.8 dB | 36/37 | 2/2 | 3.6 dB |
+| PB_QuantumFireballEX | 5359 | -1.0 dB | 2.2 dB | 93% | 12.5 dB | 6.1 dB | 38.6 / 37.8 | 23% / 28% | +1.0 dB | 3.6 dB | 17/20 | 6/7 | 5.3 dB |
+| PB_QuantumFireballTM | 4500 | -0.3 dB | 2.7 dB | 100% | 8.6 dB | 4.7 dB | 9.1 / 11.3 | 6% / 8% | +0.8 dB | 6.5 dB | 31/33 | 11/12 | 7.4 dB |
+| PB_WD_Caviar2850 | 4502 | -1.2 dB | 3.1 dB | 97% | 10.4 dB | 5.9 dB | 20.1 / 31.8 | 21% / 32% | -0.2 dB | 2.9 dB | 67/74 | 3/5 | 3.4 dB |
+| PB_WD_Raptor | 10004 | -0.3 dB | 1.2 dB | 97% | 6.9 dB | 5.0 dB | 13.5 / 17.1 | 14% / 20% | 0.0 dB | 4.2 dB | 17/18 | 5/8 | 6.2 dB |
 
 The columns:
 - **Idle bands:** the mean difference across third-octave bands.
@@ -352,7 +403,7 @@ Known gaps:
 - **Seeks:**
   - Stepper seeks ignored their level (`levelExp` and, for head events, `db`)
     until the head events found it. Refitted, the Caviar's seeks are now
-    detected too often (29/s against 20/s).
+    detected too often (32/s against 20/s).
   - The workload's gaps are a revolution plus an exponential wait. Real ones
     come in bursts: many short gaps, then a long one.
   - Back-to-back seeks are merged by the detector, so the Ultrastar's long
