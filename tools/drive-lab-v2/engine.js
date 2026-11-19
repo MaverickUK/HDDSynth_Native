@@ -133,6 +133,9 @@ function makeEngine(sr) {
     }
     setGrains();
     setHeads(drive.heads);
+    // heads.rest: where the head sits with the power off (-0.06 on a ramp just off the
+    // platter, 1 on the landing zone at the hub). Moved there only while it's off.
+    if (state === 'off' && !sk && drive.heads && drive.heads.rest != null) headX = drive.heads.rest;
     if (act) {
       seekAmp = dbToAmp(act.db == null ? 0 : act.db);
       thumpAmp = act.thumpDb == null ? 0 : dbToAmp(act.thumpDb);
@@ -208,7 +211,7 @@ function makeEngine(sr) {
   function startSeek(x, forceS, db) {
     if (!act) return;
     if (x == null) { const dd = distForS(forceS); x = headX < 0.5 ? headX + dd : headX - dd; }
-    x = clamp(x, 0, 1);
+    x = clamp(x, -0.1, 1.05);                        // a little past the data: the ramp, the landing zone
     const dist = Math.abs(x - headX);
     const stepper = isStepper(), stepHz = act.stepHz || 250;
     const n = stepper ? Math.max(1, Math.round(forceS != null ? forceS * stepHz : dist * (act.strokeSteps || 300))) : 0;
@@ -286,7 +289,7 @@ function makeEngine(sr) {
     }
     if (share > 0 && rnd() < share * 0.1) seqLeft = 10 + Math.floor(rnd() * 30);
     const loc = w.locality == null ? 0.2 : w.locality;
-    const x = rnd() < loc ? headX + (rnd() - 0.5) * 0.04 : rnd();
+    const x = rnd() < loc ? clamp(headX + (rnd() - 0.5) * 0.04, 0, 1) : rnd();   // on the data, not the ramp
     startSeek(x);
     gapLeft = rnd() * rev - Math.log(1 - rnd() * 0.999) * (w.gapMs == null ? 4 : w.gapMs) / 1000;
   }

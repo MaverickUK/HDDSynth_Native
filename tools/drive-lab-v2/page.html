@@ -1,13 +1,15 @@
-<title>HDD Synth Drive Lab v2</title>
+<title>HDD Synth Drive Lab</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
-/* A test bench: left, the drive under test (readouts, head, spectrum); right, the
-   designer, one card per part of the drive. Same look as Drive Lab v1. */
+/* Two columns: left, the drive itself (top view, activity, what you hear); right,
+   the two ways to make one (design it, or import a sample pack), with every raw
+   parameter folded away under Advanced. Same look as Drive Lab v1. */
 :root {
   --bg: #E7EAED; --panel: #F5F6F7; --sunk: #DDE1E5; --ink: #1A1E23; --muted: #5A646E; --line: #C9CFD5;
-  --accent: #C25F17; --accent-ink: #FFFFFF; --trace: #2B6B98; --tone: #C25F17; --grid: #D3D8DD;
+  --accent: #C25F17; --accent-ink: #FFFFFF; --trace: #2B6B98; --tone: #C25F17; --grid: #D3D8DD; --ok: #2E7D4F;
+  --led-off: #7D6A5C; --platter-a: #BFC5CB; --platter-b: #F3F5F6; --casting: #A3AAB1; --casting-edge: #8A929A;
   --display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
   --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -15,13 +17,15 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #131619; --panel: #1B1F23; --sunk: #101315; --ink: #E3E7EA; --muted: #95A0AA; --line: #2C3238;
-    --accent: #EE8A3C; --accent-ink: #1A1206; --trace: #69A5D2; --tone: #EE8A3C; --grid: #262B30;
+    --accent: #EE8A3C; --accent-ink: #1A1206; --trace: #69A5D2; --tone: #EE8A3C; --grid: #262B30; --ok: #5BC48A;
+    --led-off: #4A3C31; --platter-a: #545B62; --platter-b: #A7AEB4; --casting: #3A4047; --casting-edge: #4B525A;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #131619; --panel: #1B1F23; --sunk: #101315; --ink: #E3E7EA; --muted: #95A0AA; --line: #2C3238;
-  --accent: #EE8A3C; --accent-ink: #1A1206; --trace: #69A5D2; --tone: #EE8A3C; --grid: #262B30;
+  --accent: #EE8A3C; --accent-ink: #1A1206; --trace: #69A5D2; --tone: #EE8A3C; --grid: #262B30; --ok: #5BC48A;
+  --led-off: #4A3C31; --platter-a: #545B62; --platter-b: #A7AEB4; --casting: #3A4047; --casting-edge: #4B525A;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -32,148 +36,314 @@ body {
 }
 .wrap { max-width: 1340px; margin: 0 auto; display: grid; gap: 18px; }
 h1, h2, h3 { font-family: var(--display); margin: 0; text-wrap: balance; }
-h1 { font-size: 24px; } h2 { font-size: 17px; } h3 { font-size: 14px; }
+h1 { font-size: 28px; line-height: 1.05; } h2 { font-size: 18px; } h3 { font-size: 15px; }
+p { margin: 0; }
 .mono, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 button, select, input { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.muted { color: var(--muted); }
-header { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; justify-content: space-between; }
-header .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.muted, .note { color: var(--muted); }
+.note { font-size: 12.5px; }
+a { color: var(--trace); }
+code { font-family: var(--mono); font-size: 12px; }
+.eyebrow { font-family: var(--display); font-size: 11px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+
+.top { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; }
+.top p { max-width: 70ch; margin-top: 6px; color: var(--muted); }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .btn { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; min-height: 34px; }
-.btn:hover { border-color: var(--muted); }
+.btn:hover:not(:disabled) { border-color: var(--muted); }
+.btn:disabled { opacity: 0.5; cursor: default; }
 .btn[aria-pressed="true"], .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-select { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-height: 34px; max-width: 100%; }
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-.seg button { border: 0; border-radius: 0; background: var(--panel); padding: 6px 10px; cursor: pointer; min-height: 32px; }
+select, input[type=text] { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-height: 34px; max-width: 100%; }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: var(--panel); padding: 6px 11px; cursor: pointer; min-height: 32px; }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
-.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
-@media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.power { display: inline-flex; align-items: center; gap: 10px; padding: 8px 16px 8px 12px; border-radius: 6px; border: 1px solid var(--ink);
+  background: var(--ink); color: var(--bg); cursor: pointer; font-family: var(--display); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; font-size: 13px; }
+.power .led { width: 10px; height: 10px; border-radius: 50%; background: var(--led-off); }
+.power[aria-pressed="true"] .led { background: #4FCB5B; box-shadow: 0 0 8px #4FCB5B; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 18px; align-items: start; }
+@media (min-width: 961px) { .left { position: sticky; top: 12px; } }
+@media (max-width: 960px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.col { display: grid; gap: 14px; min-width: 0; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 10px; min-width: 0; }
-.card > p { margin: 0; color: var(--muted); font-size: 13px; }
-.col { display: grid; gap: 18px; min-width: 0; }
-.readouts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-@media (max-width: 520px) { .readouts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.readout { background: var(--sunk); border-radius: 8px; padding: 8px 10px; min-width: 0; }
-.readout b { display: block; font-family: var(--mono); font-size: 20px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.readout span { font-size: 12px; color: var(--muted); }
 canvas { width: 100%; display: block; background: var(--sunk); border-radius: 8px; }
-#head { height: 46px; cursor: pointer; touch-action: none; }
-#spec { height: 240px; }
-#gram { height: 150px; }
+#view { aspect-ratio: 4 / 3; cursor: crosshair; touch-action: none; }
+#spec { height: 150px; }
+#gram { height: 90px; }
+.readouts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 520px) { .readouts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.readout { background: var(--sunk); border-radius: 8px; padding: 6px 9px; min-width: 0; }
+.readout b { display: block; font-family: var(--mono); font-size: 17px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.readout span { font-size: 11.5px; color: var(--muted); }
+.drivename { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; align-items: baseline; }
+.drivename b { font-family: var(--display); font-size: 18px; }
+
+/* Tabs */
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tab { flex: 1 1 200px; text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; cursor: pointer; display: grid; gap: 2px; }
+.tab b { font-family: var(--display); font-size: 17px; }
+.tab span { color: var(--muted); font-size: 12.5px; }
+.tab[aria-selected="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.tab[aria-selected="true"] b { color: var(--accent); }
+
+/* Design sections: an illustration beside what it models */
+.presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+.preset { text-align: left; background: var(--sunk); border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; cursor: pointer; display: grid; gap: 2px; }
+.preset b { font-size: 13px; font-weight: 600; }
+.preset span { font-size: 11.5px; color: var(--muted); }
+.preset[aria-pressed="true"] { border-color: var(--accent); }
+.part { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 6px 16px; align-items: start; }
+@media (max-width: 520px) { .part { grid-template-columns: minmax(0, 1fr); } .part svg { max-width: 140px; } }
+.part svg { width: 100%; height: auto; color: var(--muted); }
+.part .txt { display: grid; gap: 4px; }
+.part .txt p { font-size: 13px; color: var(--muted); max-width: 68ch; }
+.part .txt p b { color: var(--ink); font-weight: 500; }
+.ctls { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 18px; }
+.ctl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: baseline; min-width: 0; }
+.ctl label { font-size: 13px; }
+.ctl output { font-family: var(--mono); font-size: 12px; }
+.ctl input[type=range], .ctl select, .ctl .seg { grid-column: 1 / -1; width: 100%; }
+.ctl .seg { width: auto; justify-self: start; }
+.ctl .hint { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); }
+input[type=range] { accent-color: var(--accent); margin: 2px 0 0; }
+
+/* Import */
+.drop { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 10px; justify-items: start; }
+.drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.files { display: grid; gap: 4px; font-size: 13px; }
+.files div { display: grid; grid-template-columns: 1.4em 7.5em minmax(0, 1fr); gap: 6px; }
+.files .yes { color: var(--ok); } .files .no { color: var(--muted); }
+.steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 5px; font-size: 13px; }
+.steps li { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); gap: 6px; color: var(--muted); }
+.steps li.run { color: var(--ink); font-weight: 500; } .steps li.done { color: var(--ink); } .steps li.done i { color: var(--ok); }
+.steps i { font-style: normal; }
+.bar-prog { height: 6px; background: var(--sunk); border-radius: 3px; overflow: hidden; }
+.bar-prog i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.3s; }
+table.cmp { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.cmp th, table.cmp td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+table.cmp th { color: var(--muted); font-weight: 500; }
+table.cmp td:first-child { font-weight: 500; }
+table.cmp .btn { min-height: 30px; padding: 3px 10px; }
+.examples { display: flex; flex-wrap: wrap; gap: 6px; }
+.err { color: #C0392B; }
+
+/* Advanced: the raw model */
+details.adv > summary { cursor: pointer; font-family: var(--display); font-weight: 600; font-size: 17px; }
+details.adv[open] > summary { margin-bottom: 10px; }
+details.sub { border-top: 1px solid var(--line); padding-top: 8px; }
+details.sub > summary { cursor: pointer; font-family: var(--display); font-weight: 600; font-size: 15px; }
+details.sub[open] > summary { margin-bottom: 6px; }
+details.sub > p { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
 .fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .field { display: grid; grid-template-columns: minmax(90px, 9rem) minmax(0, 1fr) 4.6rem; gap: 10px; align-items: center; }
 .field label { font-size: 13px; }
-.field input[type=range] { width: 100%; accent-color: var(--accent); }
-.field input[type=number] { width: 100%; background: var(--sunk); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; font-family: var(--mono); font-size: 12px; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { text-align: left; font-weight: 500; color: var(--muted); padding: 2px 4px; }
-td { padding: 2px 4px; }
-td input[type=number] { width: 100%; min-width: 0; background: var(--sunk); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; font-family: var(--mono); font-size: 12px; }
+.field input[type=range] { width: 100%; }
+.field input[type=number], td input[type=number], .bands input { width: 100%; min-width: 0; background: var(--sunk); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; font-family: var(--mono); font-size: 12px; }
+table.raw { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.raw th { text-align: left; font-weight: 500; color: var(--muted); padding: 2px 4px; }
+table.raw td { padding: 2px 4px; }
 .tbl { max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
 .x { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 2px 6px; }
 .x:hover { color: var(--accent); }
 .bands { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
 .bands label { display: grid; gap: 2px; font-size: 11px; color: var(--muted); }
-.bands input { width: 100%; min-width: 0; background: var(--sunk); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; font-family: var(--mono); font-size: 12px; }
-.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-details > summary { cursor: pointer; font-family: var(--display); font-weight: 600; font-size: 17px; }
-details[open] > summary { margin-bottom: 8px; }
-.note { font-size: 12px; color: var(--muted); }
-footer { color: var(--muted); font-size: 13px; }
-footer a { color: inherit; }
+
+.about { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 28px; color: var(--muted); font-size: 13px; }
+.about h2 { font-size: 15px; color: var(--ink); margin-bottom: 4px; }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { .bar-prog i { transition: none; } }
 </style>
 
 <div class="wrap">
-  <header>
+  <header class="top">
     <div>
-      <h1>Drive Lab v2</h1>
-      <div class="muted">Design the sound of a mechanical hard drive, or start from one fitted to a real recording.</div>
+      <h1>HDD Synth Drive Lab</h1>
+      <p>Make a hard drive for the HDD Synth that it synthesises live, so it can answer your PC's disk activity, as the IDE Synth Bay reports it, the way a real drive would: every seek a different length, the head going where the PC asked. Design one from scratch, or import a recorded sample pack and turn it into one.</p>
     </div>
     <div class="bar">
-      <select id="preset" aria-label="Drive"></select>
-      <button class="btn" id="open">Open…</button>
+      <button class="btn" id="open">Open drive.json…</button>
       <button class="btn" id="save">Save drive.json</button>
       <input type="file" id="openFile" accept=".json,application/json" hidden>
     </div>
   </header>
 
   <div class="grid">
-    <div class="col">
-      <section class="card">
-        <div class="row">
-          <button class="btn primary" id="power" aria-pressed="false">Power on</button>
-          <button class="btn" id="busy" aria-pressed="false" disabled>Busy</button>
-          <div class="seg" id="cls" role="group" aria-label="Workload">
-            <button data-cls="random" aria-pressed="true">Random</button>
-            <button data-cls="sequential" aria-pressed="false">Sequential</button>
-          </div>
+    <!-- ======== The drive ======== -->
+    <div class="col left">
+      <section class="card" aria-label="The drive">
+        <div class="drivename"><b id="dName">–</b><span class="note" id="dSpec"></span></div>
+        <canvas id="view" aria-label="Top view of the drive. Click the platter to move the head there."></canvas>
+        <div class="row" style="justify-content: space-between">
+          <button class="power" id="power" aria-pressed="false"><span class="led"></span><span id="powerText">Power on</span></button>
+          <span class="note">Click the platter to move the head there.</span>
         </div>
         <div class="readouts">
           <div class="readout"><b id="rRpm">0</b><span>rpm</span></div>
-          <div class="readout"><b id="rState">off</b><span>spindle</span></div>
-          <div class="readout"><b id="rHead">10%</b><span>head (0 outer, 100 inner)</span></div>
-          <div class="readout"><b id="rLevel">-</b><span>output (dB peak)</span></div>
+          <div class="readout"><b id="rState">Off</b><span>doing</span></div>
+          <div class="readout"><b id="rHead">–</b><span>head (outer 0, inner 100)</span></div>
+          <div class="readout"><b id="rLevel">–</b><span>output, dB peak</span></div>
         </div>
-        <canvas id="head" aria-label="Head position: click to seek there"></canvas>
-        <p class="note">Click the bar to seek the head there (when the drive is ready).</p>
       </section>
 
-      <section class="card">
-        <div class="row" style="justify-content: space-between">
-          <h2>Spectrum</h2>
-          <div class="seg" id="ab" role="group" aria-label="Listen to">
-            <button data-ab="synth" aria-pressed="true">Synth</button>
-            <button data-ab="ref" aria-pressed="false" disabled>Recording</button>
-            <button data-ab="both" aria-pressed="false" disabled>Both</button>
-          </div>
+      <section class="card" aria-label="Disk activity">
+        <h2>What the PC is doing</h2>
+        <div class="seg" id="activity" role="group" aria-label="Disk activity">
+          <button data-a="idle" aria-pressed="true">Nothing</button>
+          <button data-a="random" aria-pressed="false">Random reads</button>
+          <button data-a="sequential" aria-pressed="false">Copying a file</button>
+          <button data-a="bursts" aria-pressed="false">Bursts</button>
         </div>
-        <canvas id="spec" aria-label="Live spectrum, log frequency; ticks mark the drive's tones"></canvas>
+        <p class="note" id="activityNote"></p>
+      </section>
+
+      <details class="card" open>
+        <summary class="eyebrow" style="cursor:pointer">What you're hearing</summary>
+        <canvas id="spec" aria-label="Live spectrum, log frequency; orange ticks mark the drive's tones"></canvas>
         <canvas id="gram" aria-label="Spectrogram"></canvas>
-        <div class="row">
-          <button class="btn" id="refOpen">Load a recording (WAV) to compare…</button>
-          <input type="file" id="refFile" accept="audio/*,.wav" hidden>
-          <span class="note" id="refName"></span>
-        </div>
-        <p class="note">Orange ticks: where the drive's tones are now (orders × rotation rate). Blue: the synthesis. Grey: the recording.</p>
-      </section>
-
-      <section class="card">
-        <h2>About</h2>
-        <p>A drive here is pure synthesis: tones locked to the rotation, a body they pass through, air noise in bands, and an arm whose seeks ring its modes. Recorded seek sounds (grains) are an optional extra. The fitted presets come from the sample packs in <a href="https://github.com/MaverickUK/HDDSynth_Samples">HDDSynth_Samples</a> (<code>tools/drive-lab-v2/fit.js</code>); edit any of them, or start from the designed drive.</p>
-      </section>
+        <p class="note">The spectrum of what's playing (blue), with the drive's tones where they are now (orange ticks): they slide as the speed changes. Below, the last few seconds.</p>
+      </details>
     </div>
 
-    <div class="col" id="designer"></div>
+    <!-- ======== Making one ======== -->
+    <div class="col">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" id="tabDesign" aria-selected="true" aria-controls="paneDesign"><b>Design a drive</b><span>From scratch: choose its hardware, hear it change.</span></button>
+        <button class="tab" role="tab" id="tabImport" aria-selected="false" aria-controls="paneImport"><b>Import a sample pack</b><span>Turn a recorded drive into a model of it.</span></button>
+      </div>
+
+      <section id="paneDesign" class="col" role="tabpanel" aria-labelledby="tabDesign">
+        <div class="card">
+          <h2>Start from</h2>
+          <div class="presets" id="dPresets"></div>
+          <div class="row">
+            <label for="dNameIn" class="note">Name</label>
+            <input type="text" id="dNameIn" style="flex: 1 1 160px">
+            <button class="btn" id="another" title="The same hardware, different small details: each drive off the line sounds a little different.">Another like it</button>
+          </div>
+        </div>
+        <div id="parts" class="col"></div>
+      </section>
+
+      <section id="paneImport" class="col" role="tabpanel" aria-labelledby="tabImport" hidden>
+        <div class="card">
+          <h2>1. Choose a sample pack</h2>
+          <p class="muted">A pack is a folder of recordings of one drive: <code>idle.wav</code> (spinning), <code>access.wav</code> (seeking), <code>spinup.wav</code> and <code>spindown.wav</code>. Only <code>idle.wav</code> is needed; each other one adds a part of the model. Nothing leaves your computer: it all runs in this page. Packs to try are in <a href="https://github.com/MaverickUK/HDDSynth_Samples">HDDSynth_Samples</a>.</p>
+          <div class="drop" id="drop">
+            <div class="row">
+              <button class="btn" id="pickDir">Choose a folder…</button>
+              <button class="btn" id="pickFiles">Choose files…</button>
+              <span class="note">or drop the pack's files here</span>
+            </div>
+            <input type="file" id="dirIn" webkitdirectory multiple hidden>
+            <input type="file" id="filesIn" accept=".wav,.json,audio/wav" multiple hidden>
+            <div class="files" id="found"></div>
+          </div>
+          <div class="row">
+            <label for="iName" class="note">Name</label>
+            <input type="text" id="iName" style="flex: 1 1 160px">
+            <button class="btn primary" id="build" disabled>Build the model</button>
+          </div>
+        </div>
+
+        <div class="card" id="progCard" hidden>
+          <h2>2. Building the model</h2>
+          <div class="bar-prog"><i id="progBar"></i></div>
+          <ol class="steps" id="steps"></ol>
+          <p class="note" id="progNote">Each step measures the recording, then renders the model and corrects it until the two measure alike.</p>
+        </div>
+
+        <div class="card" id="resCard" hidden>
+          <h2>3. Listen</h2>
+          <p id="resSummary"></p>
+          <table class="cmp" id="cmp"></table>
+          <div id="seekSrc" class="col" hidden>
+            <h3>Seek sounds</h3>
+            <div class="seg" id="mixSeg" role="group" aria-label="Seek sounds">
+              <button data-mix="0" aria-pressed="true">Synthesised</button>
+              <button data-mix="0.5" aria-pressed="false">Half and half</button>
+              <button data-mix="1" aria-pressed="false">Recorded</button>
+            </div>
+            <p class="note">The model's seeks are synthesised. Optionally, they can use real seeks cut from the pack's access.wav (<i>grains</i>: <span id="grainInfo"></span>). Then the drive needs that small WAV beside its drive.json. The spinning is always synthesised.</p>
+          </div>
+          <div class="row">
+            <button class="btn primary" id="dlJson">Download drive.json</button>
+            <button class="btn" id="dlGrains" hidden>Download the grains WAV</button>
+            <button class="btn" id="toDesign" title="Hear it with every raw parameter open to edit, under Advanced">Fine-tune it under Advanced</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Or try one fitted already</h2>
+          <p class="muted">These were built from the packs in HDDSynth_Samples by the same code. To compare one with its recording, import that pack.</p>
+          <div class="examples" id="examples"></div>
+        </div>
+      </section>
+
+      <details class="card adv" id="adv">
+        <summary>Advanced: every number in the model</summary>
+        <p class="note" id="advNote"></p>
+        <div id="advBody" class="col"></div>
+      </details>
+    </div>
   </div>
 
-  <footer>Part of <a href="https://github.com/MaverickUK/HDDSynth_Native">HDDSynth Native</a> (<code>tools/drive-lab-v2</code>), licensed under the GPLv3. Work in progress: the firmware still runs v1's drive.json.</footer>
+  <footer class="card about">
+    <div>
+      <h2>A model, not recordings</h2>
+      <p>A drive here is a description of how it sounds: the tones its motor, bearing and platters make as multiples of the rotation speed, the casing they ring through, the air noise, the arm's resonances, how it seeks, and what its heads do at power on and off. Every sample is made live from that, so no two seeks are alike and it can follow what the PC does.</p>
+    </div>
+    <div>
+      <h2>The IDE Synth Bay</h2>
+      <p>The Bay watches the PC's disk activity and tells the HDD Synth: busy or not, random or sequential, and where the head should be. A modelled drive answers each one: the activity panel on the left sends the same kinds of thing.</p>
+    </div>
+    <div>
+      <h2>Recorded seeks (optional)</h2>
+      <p>An imported drive can use real seek sounds (grains) instead of, or mixed with, the synthesised ones: a few dozen short slices of the recording, in a small WAV that goes beside drive.json. A drive without them is pure synthesis, and needs only drive.json.</p>
+    </div>
+    <div>
+      <h2>On the HDD Synth</h2>
+      <p>Work in progress: the HDD Synth's firmware still runs Drive Lab v1's model, so these drives don't play on it yet. Part of <a href="https://github.com/MaverickUK/HDDSynth_Native">HDDSynth Native</a> (<code>tools/drive-lab-v2</code>), GPLv3.</p>
+    </div>
+  </footer>
 </div>
 
 <script>
-/*ENGINE*/
+/*BUNDLE*/
 </script>
 <script>
-const DRIVES = /*DRIVES*/;
+const FITTED = /*DRIVES*/;
 </script>
 <script>
 (() => {
+  const req = __bundle();
+  const { makeEngine } = req('engine.js');
+  const { designDrive, PRESETS: DESIGNS, DESIGN_DEFAULT, spinupFor } = req('design.js');
+  const { encodeWav } = req('wav.js');
+  const { STEPS } = req('fit.js');
   const $ = (s) => document.querySelector(s);
-  const el = (tag, props, ...kids) => { const e = Object.assign(document.createElement(tag), props || {}); kids.forEach((k) => e.append(k)); return e; };
+  const el = (tag, props, ...kids) => { const e = Object.assign(document.createElement(tag), props || {}); kids.forEach((k) => k != null && e.append(k)); return e; };
   const clone = (o) => JSON.parse(JSON.stringify(o));
   const NOISE_HZ = makeEngine(48000).NOISE_HZ;
+  const safeName = (s) => (s || 'drive').replace(/[^\w-]+/g, '_');
 
-  let drive = null, grainsBuf = null, grainsLen = 0;
+  // ---------- the drive playing ----------
+  // drive: the model in the player. grains: its recorded seeks, if any
+  //   { data (at sr), sr, buf (at the audio context's rate), len (data's length) }.
+  let drive = null, grains = null, mode = 'design';
 
   // ---------- audio ----------
-  let ctx = null, send = null, node = null, synthGain, refGain, anSynth, anRef, refBuf = null, refSrc = null;
-  let powered = false, busy = false, cls = 'random', ab = 'synth', tel = null;
+  let ctx = null, send = null, synthGain, anSynth, clipGain, tel = null;
+  let powered = false;
 
-  // The drive as the engine gets it: grains' places scaled if the browser resampled them.
+  // The drive as the engine gets it: grains' places scaled to the resampled buffer.
   function engineDrive() {
     const d = clone(drive);
-    if (d.grains && grainsBuf && grainsLen) {
-      const k = grainsBuf.length / grainsLen;
+    if (d.grains && grains && grains.buf) {
+      const k = grains.buf.length / grains.len;
       d.grains.items = d.grains.items.map((it) => ({ ...it, start: Math.round(it.start * k), len: Math.round(it.len * k) }));
     }
     return d;
@@ -183,6 +353,17 @@ const DRIVES = /*DRIVES*/;
     if (!send || pushQueued) return;
     pushQueued = true;
     requestAnimationFrame(() => { pushQueued = false; send({ type: 'params', drive: engineDrive() }); });
+  }
+  function resample(x, from, to) {
+    if (from === to) return Float32Array.from(x);
+    const n = Math.round(x.length * to / from), y = new Float32Array(n), k = from / to;
+    for (let i = 0; i < n; i++) { const p = i * k, j = Math.floor(p), u = p - j; y[i] = (x[j] || 0) * (1 - u) + (x[j + 1] || 0) * u; }
+    return y;
+  }
+  function sendGrains() {
+    if (!send) return;
+    if (grains && ctx) { if (!grains.buf) grains.buf = resample(grains.data, grains.sr, ctx.sampleRate); send({ type: 'grains', data: grains.buf }); }
+    else send({ type: 'grains', data: null });
   }
 
   const workletSource = () => makeEngine.toString() + `
@@ -202,17 +383,18 @@ class DriveProcessor extends AudioWorkletProcessor {
 registerProcessor('drive-processor', DriveProcessor);`;
 
   async function startAudio() {
+    if (ctx) return;
     ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
     let src;
     try {
       const url = URL.createObjectURL(new Blob([workletSource()], { type: 'application/javascript' }));
       await ctx.audioWorklet.addModule(url);
-      node = new AudioWorkletNode(ctx, 'drive-processor', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+      const node = new AudioWorkletNode(ctx, 'drive-processor', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
       node.port.onmessage = (ev) => { tel = ev.data; };
       send = (m) => node.port.postMessage(m);
       src = node;
     } catch (err) {
-      // No AudioWorklet: run the same engine on the main thread.
+      // No AudioWorklet: the same engine on the main thread.
       const engine = makeEngine(ctx.sampleRate);
       let ok = false;
       const sp = ctx.createScriptProcessor(1024, 0, 2);
@@ -226,77 +408,410 @@ registerProcessor('drive-processor', DriveProcessor);`;
       send = (m) => { if (m.type === 'params') ok = true; engine.handle(m); };
       src = sp;
     }
-    synthGain = ctx.createGain(); refGain = ctx.createGain();
-    anSynth = ctx.createAnalyser(); anRef = ctx.createAnalyser();
-    [anSynth, anRef].forEach((a) => { a.fftSize = 8192; a.smoothingTimeConstant = 0.6; });
-    src.connect(anSynth); anSynth.connect(synthGain); synthGain.connect(ctx.destination);
-    anRef.connect(refGain); refGain.connect(ctx.destination);
+    synthGain = ctx.createGain(); clipGain = ctx.createGain();
+    anSynth = ctx.createAnalyser(); anSynth.fftSize = 8192; anSynth.smoothingTimeConstant = 0.6;
+    src.connect(synthGain); synthGain.connect(anSynth); clipGain.connect(anSynth); anSynth.connect(ctx.destination);
     send({ type: 'params', drive: engineDrive() });
-    if (grainsBuf) send({ type: 'grains', data: grainsBuf });
-    applyAb();
-    if (refBuf) startRef();
+    sendGrains();
+    sendActivity();
   }
+  async function ensureAudio() { await startAudio(); if (ctx.state === 'suspended') await ctx.resume(); }
 
-  $('#power').addEventListener('click', async () => {
-    if (!ctx) await startAudio();
-    if (ctx.state === 'suspended') await ctx.resume();
-    powered = !powered;
-    send({ type: 'power', on: powered });
-    $('#power').setAttribute('aria-pressed', String(powered));
-    $('#power').textContent = powered ? 'Power off' : 'Power on';
-    $('#busy').disabled = !powered;
-    if (!powered && busy) setBusy(false);
-  });
-  function setBusy(on) {
-    busy = on;
-    $('#busy').setAttribute('aria-pressed', String(on));
-    if (send) send({ type: 'busy', on, cls });
+  function setPower(on) {
+    powered = on;
+    if (send) send({ type: 'power', on });
+    $('#power').setAttribute('aria-pressed', String(on));
+    $('#powerText').textContent = on ? 'Power off' : 'Power on';
   }
-  $('#busy').addEventListener('click', () => setBusy(!busy));
-  $('#cls').addEventListener('click', (e) => {
-    const b = e.target.closest('button'); if (!b) return;
-    cls = b.dataset.cls;
-    document.querySelectorAll('#cls button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-    if (busy && send) send({ type: 'busy', on: true, cls });
-  });
+  $('#power').addEventListener('click', async () => { await ensureAudio(); stopClip(); setPower(!powered); });
 
-  // ---------- head bar: click to seek ----------
-  const headCv = $('#head');
-  headCv.addEventListener('pointerdown', (e) => {
+  // ---------- disk activity, as the Bay would report it ----------
+  const ACTIVITY = {
+    idle: 'Nothing: the drive just spins. With the power on, the heads load and calibrate first, as a real drive does.',
+    random: 'Random reads: small reads all over the disk (opening programs, a database). The head jumps about, each seek as long as the distance.',
+    sequential: 'Copying a file: reading in order. The head steps one track at a time, every couple of turns.',
+    bursts: 'Bursts: busy for a moment, then quiet, again and again (booting, browsing), with some of each kind.',
+  };
+  let activity = 'idle', burstTimer = 0;
+  function sendActivity() {
     if (!send) return;
-    const r = headCv.getBoundingClientRect();
-    send({ type: 'seek', x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) });
+    clearTimeout(burstTimer);
+    if (activity === 'bursts') { burst(true); return; }
+    send({ type: 'busy', on: activity !== 'idle', cls: activity === 'sequential' ? 'sequential' : 'random' });
+  }
+  function burst(on) {
+    if (activity !== 'bursts' || !send) return;
+    send({ type: 'busy', on, cls: Math.random() < 0.7 ? 'random' : 'sequential' });
+    burstTimer = setTimeout(() => burst(!on), on ? 150 + Math.random() * 1300 : 300 + Math.random() * 2700);
+  }
+  $('#activity').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    activity = b.dataset.a;
+    document.querySelectorAll('#activity button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    $('#activityNote').textContent = ACTIVITY[activity];
+    sendActivity();
+  });
+  $('#activityNote').textContent = ACTIVITY.idle;
+
+  // ---------- recordings and renders to compare (import) ----------
+  let clipSrc = null, clipBtn = null;
+  function stopClip() {
+    if (clipSrc) { const s = clipSrc; clipSrc = null; try { s.stop(); } catch (e) {} }
+    if (clipBtn) { clipBtn.setAttribute('aria-pressed', 'false'); clipBtn.textContent = clipBtn.dataset.label; clipBtn = null; }
+    if (synthGain) synthGain.gain.setTargetAtTime(1, ctx.currentTime, 0.03);
+  }
+  async function playClip(x, sr, btn) {
+    const same = clipBtn === btn;
+    stopClip();
+    if (same) return;
+    await ensureAudio();
+    const b = ctx.createBuffer(1, x.length, sr);
+    b.copyToChannel(x instanceof Float32Array ? x : Float32Array.from(x), 0);
+    const s = ctx.createBufferSource(); s.buffer = b; s.connect(clipGain);
+    s.onended = () => { if (clipSrc === s) stopClip(); };
+    synthGain.gain.setTargetAtTime(0, ctx.currentTime, 0.03);    // the live drive steps aside
+    clipSrc = s; clipBtn = btn; btn.setAttribute('aria-pressed', 'true'); btn.textContent = 'Stop';
+    s.start();
+  }
+
+  // ---------- loading a drive into the player ----------
+  function setDrive(d, g) {
+    drive = d;
+    if (g !== undefined) { grains = g; sendGrains(); }
+    pushParams();
+    showName();
+    if ($('#adv').open) buildAdvanced();
+  }
+  function showName() {
+    $('#dName').textContent = drive.name || 'Drive';
+    const des = drive.design, a = drive.actuator;
+    const bits = [Math.round(drive.spindle.rpm) + ' rpm'];
+    if (des) bits.unshift(des.size + '″', des.platters + (des.platters === 1 ? ' platter' : ' platters'));
+    if (a) bits.push(a.kind === 'stepper' ? 'stepper' : 'voice coil');
+    if (drive.grains && drive.grains.mix > 0) bits.push('recorded seeks');
+    $('#dSpec').textContent = bits.join(' · ');
+  }
+
+  // ---------- tabs ----------
+  let designDriveCur = null, importDrive = null, importGrains = null;
+  function setMode(m) {
+    mode = m;
+    $('#tabDesign').setAttribute('aria-selected', String(m === 'design'));
+    $('#tabImport').setAttribute('aria-selected', String(m === 'import'));
+    $('#paneDesign').hidden = m !== 'design'; $('#paneImport').hidden = m !== 'import';
+    stopClip();
+    if (m === 'design') setDrive(designDriveCur, null);
+    else if (importDrive) setDrive(importDrive, importGrains);
+    $('#advNote').textContent = m === 'design'
+      ? 'The design above builds these. Edit them by hand to go further, but changing a design choice again rebuilds them.'
+      : 'The import measured these from the recordings. Edit any of them; Save keeps your edits.';
+  }
+  $('#tabDesign').addEventListener('click', () => setMode('design'));
+  $('#tabImport').addEventListener('click', () => setMode('import'));
+
+  // ---------- Design ----------
+  const SVG = {
+    platters: `<svg viewBox="0 0 120 84" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6"><line x1="60" y1="6" x2="60" y2="80"/><ellipse cx="60" cy="22" rx="50" ry="10"/><ellipse cx="60" cy="40" rx="50" ry="10"/><ellipse cx="60" cy="58" rx="50" ry="10"/></g><path d="M86 10 q22 4 22 12" fill="none" stroke="var(--accent)" stroke-width="2" marker-end="url(#ar1)"/><defs><marker id="ar1" viewBox="0 0 6 6" refX="3" refY="3" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L6 3L0 6z" fill="var(--accent)"/></marker></defs></svg>`,
+    motor: `<svg viewBox="0 0 120 84" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="60" cy="42" r="36"/><circle cx="60" cy="42" r="15"/></g><g fill="currentColor">${Array.from({ length: 12 }, (_, i) => { const a = i * Math.PI / 6; return `<rect x="-3" y="-30" width="6" height="11" transform="translate(60 42) rotate(${(a * 180 / Math.PI).toFixed(0)})"/>`; }).join('')}</g><g fill="var(--accent)">${Array.from({ length: 4 }, (_, i) => `<path d="M0 -15 A15 15 0 0 1 10.6 -10.6 L7 -7 A10 10 0 0 0 0 -10z" transform="translate(60 42) rotate(${i * 90})"/>`).join('')}</g></svg>`,
+    bearing: `<svg viewBox="0 0 120 84" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="60" cy="42" r="36"/><circle cx="60" cy="42" r="18"/></g><g fill="var(--accent)">${Array.from({ length: 8 }, (_, i) => { const a = i * Math.PI / 4; return `<circle cx="${(60 + 27 * Math.cos(a)).toFixed(1)}" cy="${(42 + 27 * Math.sin(a)).toFixed(1)}" r="7"/>`; }).join('')}</g></svg>`,
+    arm: `<svg viewBox="0 0 120 84" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="44" cy="44" r="38"/><circle cx="44" cy="44" r="9"/><path d="M44 8 a36 36 0 0 1 0 72" stroke-dasharray="2 4"/></g><path d="M108 70 L62 28" stroke="currentColor" stroke-width="6" stroke-linecap="round"/><circle cx="108" cy="70" r="7" fill="currentColor"/><circle cx="60" cy="26" r="3.5" fill="var(--accent)"/><path d="M70 14 q-14 2 -22 14" fill="none" stroke="var(--accent)" stroke-width="2" marker-end="url(#ar2)"/><defs><marker id="ar2" viewBox="0 0 6 6" refX="3" refY="3" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L6 3L0 6z" fill="var(--accent)"/></marker></defs></svg>`,
+    power: `<svg viewBox="0 0 120 84" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="46" cy="44" r="38"/><circle cx="46" cy="44" r="9"/><circle cx="46" cy="44" r="16" stroke-dasharray="3 3"/></g><path d="M80 34 l16 -6 l8 4 l-16 8z" fill="currentColor"/><circle cx="86" cy="34" r="3.5" fill="var(--accent)"/><circle cx="60" cy="40" r="3.5" fill="none" stroke="var(--accent)" stroke-width="1.6"/><text x="98" y="56" font-size="10" fill="currentColor" font-family="sans-serif">ramp</text><text x="20" y="80" font-size="10" fill="currentColor" font-family="sans-serif">landing zone</text></svg>`,
+    case: `<svg viewBox="0 0 120 84" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6"><rect x="8" y="6" width="104" height="72" rx="4"/><rect x="24" y="30" width="72" height="22" rx="2"/><line x1="24" y1="30" x2="8" y2="30"/><line x1="96" y1="30" x2="112" y2="30"/></g><g fill="var(--accent)"><circle cx="30" cy="56" r="3"/><circle cx="90" cy="56" r="3"/></g><path d="M40 62 q20 10 40 0" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="2 3"/></svg>`,
+  };
+  // [key, label, kind, ...]: range: min, max, step, unit; select/seg: options [[value, label]].
+  // when: only shown for that actuator kind. hint(design): a line under it.
+  const PARTS = [
+    { svg: 'platters', title: 'Platters and speed',
+      what: 'The disks the data is on, spun by the motor: how big they are, how many, how fast.',
+      hear: 'The faster, bigger and more platters, the louder the <b>rush of air</b> and the higher its pitch. Speed sets every tone\'s pitch; spin-up is how long it takes to get there.',
+      ctls: [['size', 'Size', 'seg', [['5.25', '5.25″'], ['3.5', '3.5″'], ['2.5', '2.5″']]], ['platters', 'Platters', 'range', 1, 8, 1, ''],
+        ['rpm', 'Speed', 'range', 3600, 15000, 100, 'rpm'], ['spinupS', 'Spin-up time', 'range', 0, 25, 0.5, 's', null, (d) => (d.spinupS > 0 ? '' : 'Auto: ' + spinupFor(d) + ' s')]] },
+    { svg: 'motor', title: 'Spindle motor',
+      what: 'A brushless motor: magnets on the hub, coils in slots around it, switched in turn.',
+      hear: 'Its <b>whine</b>: a few pure tones at the rate the coils switch, loudest while it works hard spinning up. Imbalance is the platters\' once-a-turn <b>hum and wobble</b>.',
+      ctls: [['motorPoles', 'Magnet poles', 'seg', [[4, '4'], [8, '8'], [12, '12']]], ['motorSlots', 'Coil slots', 'seg', [[9, '9'], [12, '12'], [18, '18']]],
+        ['whine', 'Whine', 'range', 0, 1, 0.01, ''], ['imbalance', 'Imbalance', 'range', 0, 1, 0.01, '']] },
+    { svg: 'bearing', title: 'Bearing',
+      what: 'What the spindle turns on: steel balls in a race (most drives until the mid-2000s) or a film of oil (fluid bearings).',
+      hear: 'Ball bearings add a <b>rough edge</b>: tones at odd fractions of the speed, set by the balls, and a rumble as they wear. Fluid bearings are almost silent.',
+      ctls: [['bearing', 'Type', 'seg', [['ball', 'Ball bearings'], ['fdb', 'Fluid bearing']]], ['wear', 'Wear', 'range', 0, 1, 0.01, '']] },
+    { svg: 'arm', title: 'Heads and arm',
+      what: 'The arm that swings the heads across the platters, moved by a voice coil (a magnet and coil, fast) or, on old drives, a stepper motor (a step at a time).',
+      hear: 'Each <b>seek</b>: a voice coil\'s knock and rock, longer and louder the further it goes, or a stepper\'s buzz of steps. The full-stroke time is the longest seek, edge to edge.',
+      ctls: [['actuator', 'Moved by', 'seg', [['voice', 'Voice coil'], ['stepper', 'Stepper motor']]],
+        ['seekMs', 'Full-stroke seek', 'range', 6, 60, 0.5, 'ms', 'voice', (d) => 'Track to track: ' + Math.max(0.8, d.seekMs / 9).toFixed(1) + ' ms'],
+        ['stepHz', 'Step rate', 'range', 80, 600, 5, 'Hz', 'stepper'], ['seekDb', 'Seek loudness', 'range', -12, 6, 0.5, 'dB']] },
+    { svg: 'power', title: 'Power on and off',
+      what: 'What the heads do when the power comes and goes. Modern drives park them on a ramp off the edge; older ones land them on a zone by the hub; the oldest leave them where they are.',
+      hear: 'After spin-up, the heads <b>load</b> and the drive <b>calibrates</b>: a run of seeks across the disk. At power off, the <b>park</b>: a quick sweep and the latch\'s click.',
+      ctls: [['park', 'Heads park', 'seg', [['ramp', 'On a ramp'], ['zone', 'On a landing zone'], ['none', 'Not parked']]], ['calibration', 'Calibration seeks', 'range', 0, 8, 1, '']] },
+    { svg: 'case', title: 'Case and mounting',
+      what: 'What the drive is bolted into: it rings the casing\'s resonances, and whatever it sits in adds its own.',
+      hear: 'Bare on a desk is <b>thin and bright</b>; in a PC case it <b>booms</b>; on a rubber sled it\'s <b>soft and muffled</b>. Brightness tilts the treble.',
+      ctls: [['mount', 'Mounted', 'seg', [['bare', 'Bare on a desk'], ['case', 'In a PC case'], ['sled', 'On a rubber sled']]], ['bright', 'Brightness', 'range', -1, 1, 0.05, '']] },
+  ];
+
+  let spec = null, specPreset = null, redesignTimer = 0;
+  const ctlEls = [];
+  function redesign(now) {
+    clearTimeout(redesignTimer);
+    const go = () => { designDriveCur = designDrive({ ...spec, name: $('#dNameIn').value || 'Designed drive' }); if (mode === 'design') setDrive(designDriveCur, null); refreshCtls(); };
+    if (now) go(); else redesignTimer = setTimeout(go, 120);
+  }
+  function refreshCtls() {
+    for (const c of ctlEls) {
+      c.wrap.hidden = !!(c.when && c.when !== spec.actuator);
+      if (c.out) c.out.textContent = c.fmt(spec[c.key]);
+      if (c.input) c.input.value = spec[c.key];
+      if (c.seg) c.seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === String(spec[c.key]))));
+      if (c.hintEl) c.hintEl.textContent = c.hint(spec);
+    }
+  }
+  function buildParts() {
+    const P = $('#parts');
+    for (const part of PARTS) {
+      const ctls = el('div', { className: 'ctls' });
+      for (const [key, label, kind, a, b, step, unit, when, hint] of part.ctls) {
+        const id = 'c_' + key, wrap = el('div', { className: 'ctl' }), c = { key, wrap, when: null };
+        if (kind === 'range') {
+          c.when = when; c.hint = hint;
+          const dp = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
+          c.fmt = (v) => (key === 'spinupS' && !(v > 0) ? 'auto' : Number(v).toFixed(dp) + (unit ? ' ' + unit : ''));
+          const out = el('output', { htmlFor: id });
+          const input = el('input', { type: 'range', id, min: a, max: b, step });
+          input.addEventListener('input', () => { spec[key] = Number(input.value); out.textContent = c.fmt(spec[key]); redesign(); });
+          wrap.append(el('label', { htmlFor: id, textContent: label }), out, input);
+          c.out = out; c.input = input;
+        } else {
+          const seg = el('div', { className: 'seg', role: 'group', 'aria-label': label });
+          for (const [v, t] of a) {
+            const btn = el('button', { textContent: t }); btn.dataset.v = String(v);
+            btn.addEventListener('click', () => { spec[key] = v; redesign(); refreshCtls(); });
+            seg.append(btn);
+          }
+          wrap.append(el('label', { textContent: label }), el('span'), seg);
+          c.seg = seg;
+        }
+        if (c.hint) { c.hintEl = el('span', { className: 'hint' }); wrap.append(c.hintEl); }
+        ctls.append(wrap); ctlEls.push(c);
+      }
+      const svgBox = el('div'); svgBox.innerHTML = SVG[part.svg];
+      const txt = el('div', { className: 'txt' }, el('h2', { textContent: part.title }), el('p', { innerHTML: part.what }), el('p', { innerHTML: part.hear }));
+      P.append(el('section', { className: 'card' }, el('div', { className: 'part' }, svgBox, txt, ctls)));
+    }
+  }
+  function useDesign(p) {
+    spec = { ...DESIGN_DEFAULT, ...clone(p.design) };
+    specPreset = p.id;
+    $('#dNameIn').value = p.name;
+    document.querySelectorAll('#dPresets .preset').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.id === p.id)));
+    refreshCtls(); redesign(true);
+  }
+  DESIGNS.forEach((p) => {
+    const b = el('button', { className: 'preset' }, el('b', { textContent: p.name }), el('span', { textContent: p.note }));
+    b.dataset.id = p.id;
+    b.addEventListener('click', () => useDesign(p));
+    $('#dPresets').append(b);
+  });
+  $('#dNameIn').addEventListener('change', () => redesign(true));
+  $('#another').addEventListener('click', () => { spec.seed = (spec.seed || 1) + 1; redesign(true); });
+
+  // ---------- Import ----------
+  const KINDS = [
+    ['idle', 'idle.wav', 'the spinning: speed, tones, air noise'],
+    ['access', 'access.wav', 'the seeks: the arm, how fast and often it moves'],
+    ['spinup', 'spinup.wav', 'spin-up time, and the heads loading and calibrating'],
+    ['spindown', 'spindown.wav', 'coast-down, the casing, and the park'],
+  ];
+  let picked = {}, packJson = null;
+  function takeFiles(list) {
+    picked = {}; packJson = null;
+    let folder = '';
+    for (const f of list) {
+      const n = f.name.toLowerCase();
+      const k = KINDS.find(([, file]) => n === file);
+      if (k) picked[k[0]] = f;
+      if (n === 'pack.json') packJson = f;
+      const rel = f.webkitRelativePath || '';
+      if (!folder && rel.includes('/')) folder = rel.split('/').slice(-2, -1)[0];
+    }
+    $('#found').replaceChildren(...KINDS.map(([k, file, use]) => el('div', {},
+      el('span', { className: picked[k] ? 'yes' : 'no', textContent: picked[k] ? '✓' : '–' }),
+      el('code', { textContent: file }), el('span', { className: 'note', textContent: picked[k] ? use : 'not found: ' + (k === 'idle' ? 'needed' : 'this part keeps its defaults') }))));
+    $('#build').disabled = !picked.idle;
+    $('#iName').value = folder || $('#iName').value || 'Imported drive';
+    if (packJson) packJson.text().then((t) => { try { const j = JSON.parse(t); if (j.NAME) $('#iName').value = j.NAME; } catch (e) {} });
+  }
+  $('#pickDir').addEventListener('click', () => $('#dirIn').click());
+  $('#pickFiles').addEventListener('click', () => $('#filesIn').click());
+  $('#dirIn').addEventListener('change', (e) => takeFiles(e.target.files));
+  $('#filesIn').addEventListener('change', (e) => takeFiles(e.target.files));
+  const drop = $('#drop');
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', async (e) => {
+    e.preventDefault(); drop.classList.remove('over');
+    // A dropped folder: read its entries; dropped files: take them.
+    const files = [], items = [...(e.dataTransfer.items || [])].map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+    const walk = (entry) => new Promise((res) => {
+      if (entry.isFile) entry.file((f) => { files.push(f); res(); }, () => res());
+      else if (entry.isDirectory) { if (!$('#iName').value || $('#iName').value === 'Imported drive') $('#iName').value = entry.name; entry.createReader().readEntries(async (es) => { for (const x of es) await walk(x); res(); }, () => res()); }
+      else res();
+    });
+    if (items.length) { for (const it of items) await walk(it); takeFiles(files); }
+    else takeFiles(e.dataTransfer.files);
   });
 
-  // ---------- reference recording (A/B) ----------
-  function startRef() {
-    if (!ctx || !refBuf) return;
-    if (refSrc) { try { refSrc.stop(); } catch (e) {} }
-    refSrc = ctx.createBufferSource(); refSrc.buffer = refBuf; refSrc.loop = true;
-    refSrc.connect(anRef); refSrc.start();
+  // The fitting runs in a worker (it takes a while), with the same code as fit.js.
+  const workerSource = () => `const __bundle = ${__bundle.toString()};
+const req = __bundle();
+const { parseWav } = req('wav.js'), { fitAudio } = req('fit.js'), { extractGrains } = req('grains.js');
+const { renderPack } = req('render.js'), { overIdle } = req('seek_fit.js');
+const f32 = (x) => Float32Array.from(x);
+onmessage = (ev) => {
+  const m = ev.data;
+  try {
+    const audio = {};
+    for (const k of Object.keys(m.files)) audio[k] = parseWav(new Uint8Array(m.files[k]), k + '.wav');
+    const sr = audio.idle.sr;
+    const { drive } = fitAudio(m.name, audio, { progress: (step, label) => postMessage({ type: 'progress', step, label }) });
+    drive.note = 'Fitted in the Drive Lab from ' + m.name;
+    let grains = null;
+    if (audio.access && drive.actuator) {
+      postMessage({ type: 'progress', step: 'grains', label: '' });
+      const g = extractGrains(audio.access.x, audio.idle.x, sr);
+      if (g) { grains = f32(g.data); drive.grains = { file: m.file + '.grains.wav', mix: 0, items: g.items }; }
+    }
+    postMessage({ type: 'progress', step: 'render', label: '' });
+    const pack = renderPack(drive, sr), model = {}, real = {}, out = [];
+    for (const k of ['spinup', 'idle', 'access', 'spindown']) {
+      if (audio[k]) real[k] = f32(k === 'access' ? overIdle(audio.access.x, audio.idle.x) : audio[k].x);
+      model[k] = f32(pack[k]);
+    }
+    let modelGrains = null;
+    if (grains) modelGrains = f32(renderPack({ ...drive, grains: { ...drive.grains, mix: 1 } }, sr, grains).access);
+    for (const o of [grains, modelGrains, ...Object.values(model), ...Object.values(real)]) if (o) out.push(o.buffer);
+    postMessage({ type: 'done', drive, sr, grains, real, model, modelGrains }, out);
+  } catch (err) { postMessage({ type: 'error', message: err.message }); }
+};`;
+  const ALL_STEPS = [...STEPS, ['grains', 'Cutting real seeks out of access.wav, in case you want them'], ['render', 'Rendering the model, to compare with the recordings']];
+  const NEEDS = { spinup: 'spinup', spindown: 'spindown', seeks: 'access', grains: 'access', heads: null };
+  let worker = null, lastResult = null;
+  $('#build').addEventListener('click', async () => {
+    const name = $('#iName').value.trim() || 'Imported drive';
+    const files = {};
+    for (const k of Object.keys(picked)) files[k] = await picked[k].arrayBuffer();
+    const steps = ALL_STEPS.filter(([k]) => (k === 'heads' ? picked.access && (picked.spinup || picked.spindown) : !NEEDS[k] || picked[NEEDS[k]]));
+    $('#steps').replaceChildren(...steps.map(([k, label]) => { const li = el('li', {}, el('i', { textContent: '○' }), el('span', { textContent: label })); li.dataset.k = k; return li; }));
+    $('#progCard').hidden = false; $('#resCard').hidden = true; $('#progBar').style.width = '0';
+    $('#progNote').className = 'note'; $('#progNote').textContent = 'Each step measures the recording, then renders the model and corrects it until the two measure alike. It takes a minute or less.';
+    $('#build').disabled = true;
+    if (worker) worker.terminate();
+    worker = new Worker(URL.createObjectURL(new Blob([workerSource()], { type: 'application/javascript' })));
+    const mark = (k) => {
+      let seen = false, i = 0;
+      document.querySelectorAll('#steps li').forEach((li, j) => {
+        if (li.dataset.k === k) { li.className = 'run'; li.firstChild.textContent = '●'; seen = true; i = j; }
+        else if (!seen) { li.className = 'done'; li.firstChild.textContent = '✓'; }
+      });
+      $('#progBar').style.width = (100 * i / steps.length) + '%';
+    };
+    worker.onmessage = (ev) => {
+      const m = ev.data;
+      if (m.type === 'progress') mark(m.step);
+      else if (m.type === 'error') {
+        $('#progNote').className = 'err'; $('#progNote').textContent = 'That didn\'t work: ' + m.message;
+        $('#build').disabled = !picked.idle;
+      } else if (m.type === 'done') {
+        document.querySelectorAll('#steps li').forEach((li) => { li.className = 'done'; li.firstChild.textContent = '✓'; });
+        $('#progBar').style.width = '100%';
+        $('#build').disabled = !picked.idle;
+        showResult(m);
+      }
+    };
+    worker.postMessage({ name, file: safeName(name), files }, Object.values(files));
+  });
+
+  function showResult(r) {
+    lastResult = r;
+    importDrive = r.drive;
+    importGrains = r.grains ? { data: r.grains, sr: r.sr, len: r.grains.length, buf: null } : null;
+    const d = r.drive, a = d.actuator;
+    $('#resSummary').textContent = `${d.name}: ${Math.round(d.spindle.rpm)} rpm, ${d.tones.length} tones` +
+      (a ? `, a ${a.kind === 'stepper' ? 'stepper' : 'voice-coil'} arm with ${a.modes.length} resonances` : '') +
+      (d.heads ? `, ${(d.heads.spinup || []).length} head events at power on and ${(d.heads.spindown || []).length} at power off` : '') +
+      '. It\'s playing on the left now: power it on, and try the activity. Below, compare it with the recording.';
+    const NAMES = { spinup: 'Spin-up', idle: 'Spinning', access: 'Seeking', spindown: 'Spindown' };
+    const rows = [el('tr', {}, el('th', { textContent: '' }), el('th', { textContent: 'Recording' }), el('th', { textContent: 'Model' }), el('th', { textContent: r.modelGrains ? 'Model, recorded seeks' : '' }))];
+    const btn = (label, x) => { const b = el('button', { className: 'btn', textContent: label }); b.dataset.label = label; b.addEventListener('click', () => playClip(x, r.sr, b)); return b; };
+    for (const k of ['spinup', 'idle', 'access', 'spindown']) {
+      if (!r.real[k]) continue;
+      rows.push(el('tr', {}, el('td', { textContent: NAMES[k] }), el('td', {}, btn('▶ Play', r.real[k])), el('td', {}, btn('▶ Play', r.model[k])),
+        el('td', {}, k === 'access' && r.modelGrains ? btn('▶ Play', r.modelGrains) : '')));
+    }
+    $('#cmp').replaceChildren(...rows);
+    $('#seekSrc').hidden = !r.grains;
+    if (r.grains) {
+      const kb = Math.round(r.grains.length * 2 / 1024);
+      $('#grainInfo').textContent = `${d.grains.items.length} of them, ${kb} KB`;
+    }
+    setMix(0);
+    $('#resCard').hidden = false;
+    setMode('import');
   }
-  function applyAb() {
-    document.querySelectorAll('#ab button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.ab === ab)));
-    if (!ctx) return;
-    const t = ctx.currentTime;
-    synthGain.gain.setTargetAtTime(ab === 'ref' ? 0 : 1, t, 0.02);
-    refGain.gain.setTargetAtTime(ab === 'synth' ? 0 : 1, t, 0.02);
+  function setMix(v) {
+    if (!importDrive || !importDrive.grains) return;
+    importDrive.grains.mix = v;
+    document.querySelectorAll('#mixSeg button').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.mix) === v)));
+    $('#dlGrains').hidden = !(v > 0);
+    if (drive === importDrive) { pushParams(); showName(); }
   }
-  $('#ab').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b || b.disabled) return; ab = b.dataset.ab; applyAb(); });
-  $('#refOpen').addEventListener('click', () => $('#refFile').click());
-  $('#refFile').addEventListener('change', async (e) => {
+  $('#mixSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setMix(Number(b.dataset.mix)); });
+  $('#dlJson').addEventListener('click', () => saveDrive(importDrive));
+  $('#dlGrains').addEventListener('click', () => { if (importGrains) download(new Blob([encodeWav(importGrains.data, importGrains.sr)], { type: 'audio/wav' }), importDrive.grains.file); });
+  $('#toDesign').addEventListener('click', () => { $('#adv').open = true; buildAdvanced(); $('#adv').scrollIntoView({ behavior: 'smooth' }); });
+
+  Object.keys(FITTED).sort().forEach((k) => {
+    const b = el('button', { className: 'btn', textContent: FITTED[k].name });
+    b.addEventListener('click', () => {
+      importDrive = clone(FITTED[k]); importGrains = null;
+      $('#resCard').hidden = true; $('#progCard').hidden = true;
+      setMode('import');
+    });
+    $('#examples').append(b);
+  });
+
+  // ---------- files ----------
+  function download(blob, name) {
+    const a = el('a', { href: URL.createObjectURL(blob), download: name });
+    document.body.append(a); a.click(); a.remove();
+  }
+  // A drive whose seeks are all synthesised needs no grains: leave them out.
+  function saveDrive(d) {
+    const out = clone(d);
+    if (out.grains && !(out.grains.mix > 0)) delete out.grains;
+    download(new Blob([JSON.stringify(out, null, 1) + '\n'], { type: 'application/json' }), safeName(out.name) + '.json');
+  }
+  $('#save').addEventListener('click', () => saveDrive(drive));
+  $('#open').addEventListener('click', () => $('#openFile').click());
+  $('#openFile').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
-    if (!ctx) await startAudio();
     try {
-      refBuf = await ctx.decodeAudioData(await f.arrayBuffer());
-      $('#refName').textContent = f.name + ' (loops)';
-      document.querySelectorAll('#ab button').forEach((b) => { b.disabled = false; });
-      startRef();
-    } catch (err) { $('#refName').textContent = 'Could not read ' + f.name; }
+      const d = JSON.parse(await f.text());
+      if (d.version !== 3) throw new Error('this page needs a version 3 drive.json (Drive Lab v1 files are version 2)');
+      if (d.design) {
+        spec = { ...DESIGN_DEFAULT, ...d.design }; $('#dNameIn').value = d.name || '';
+        document.querySelectorAll('#dPresets .preset').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+        designDriveCur = d; refreshCtls(); setMode('design');
+      } else {
+        importDrive = d; importGrains = null; $('#resCard').hidden = true; $('#progCard').hidden = true; setMode('import');
+        if (d.grains) { $('#adv').open = true; buildAdvanced(); }
+      }
+    } catch (err) { alert('Could not open ' + f.name + ': ' + err.message); }
+    e.target.value = '';
   });
 
-  // ---------- the designer ----------
-  // Field specs: [key, label, min, max, step, unit]
+  // ---------- Advanced: every raw parameter ----------
   const SPINDLE = [
     ['rpm', 'Speed', 1000, 15000, 1, 'rpm'], ['spinupS', 'Spin-up', 0.5, 30, 0.1, 's'], ['coastS', 'Coast down', 0.5, 40, 0.1, 's'],
     ['friction', 'Friction', 0.01, 0.999, 0.001, ''], ['speedExp', 'Tones vs speed', 0, 4, 0.05, '^'], ['motorBoostDb', 'Motor boost', 0, 24, 0.5, 'dB'],
@@ -328,15 +843,14 @@ registerProcessor('drive-processor', DriveProcessor);`;
     return el('div', { className: 'field' }, el('label', { htmlFor: range.id, textContent: label + (unit && unit !== '^' ? ' (' + unit + ')' : '') }), range, num);
   }
   const fields = (obj, specs, defs) => el('div', { className: 'fields' }, ...specs.map((s) => fieldRow(obj, s, defs)));
-
-  // An editable table of rows (tones, body modes, arm modes).
-  function table(rows, cols, make, after) {
+  // An editable table of rows. A column marked 'opt' may be left blank (the key is left out).
+  function table(rows, cols, make) {
     const wrap = el('div');
     const draw = () => {
       const tb = el('tbody');
       rows.forEach((r, i) => {
         const tr = el('tr');
-        cols.forEach(([key, , step]) => {
+        cols.forEach(([key, , step, opt]) => {
           if (step === 'check') {
             const c = el('input', { type: 'checkbox', checked: !!r[key], 'aria-label': key });
             c.addEventListener('change', () => { if (c.checked) r[key] = true; else delete r[key]; pushParams(); });
@@ -344,261 +858,247 @@ registerProcessor('drive-processor', DriveProcessor);`;
           } else {
             const n = el('input', { type: 'number', step, value: r[key] == null ? '' : r[key], 'aria-label': key + ' ' + (i + 1) });
             n.addEventListener('change', () => {
-              // An empty cell in an optional column (opt) leaves the key out.
-              if (n.value === '' && cols.find((c) => c[0] === key)[3] === 'opt') { delete r[key]; pushParams(); if (after) after(); return; }
-              const v = Number(n.value); if (isFinite(v)) { r[key] = v; pushParams(); if (after) after(); }
+              if (n.value === '' && opt === 'opt') { delete r[key]; pushParams(); return; }
+              const v = Number(n.value); if (isFinite(v)) { r[key] = v; pushParams(); }
             });
             tr.append(el('td', {}, n));
           }
         });
         const x = el('button', { className: 'x', textContent: '✕', title: 'Remove', 'aria-label': 'Remove row ' + (i + 1) });
-        x.addEventListener('click', () => { rows.splice(i, 1); draw(); pushParams(); if (after) after(); });
+        x.addEventListener('click', () => { rows.splice(i, 1); draw(); pushParams(); });
         tr.append(el('td', {}, x));
         tb.append(tr);
       });
       const head = el('tr', {}, ...cols.map(([, label]) => el('th', { textContent: label })), el('th'));
-      wrap.replaceChildren(el('div', { className: 'tbl' }, el('table', {}, el('thead', {}, head), tb)));
+      wrap.replaceChildren(el('div', { className: 'tbl' }, el('table', { className: 'raw' }, el('thead', {}, head), tb)));
       const add = el('button', { className: 'btn', textContent: '+ Add' });
-      add.addEventListener('click', () => { rows.push(make()); draw(); pushParams(); if (after) after(); });
+      add.addEventListener('click', () => { rows.push(make()); draw(); pushParams(); });
       wrap.append(el('div', { className: 'row', style: 'margin-top:6px' }, add));
     };
     draw();
     return wrap;
   }
+  const sub = (title, blurb, ...kids) => el('details', { className: 'sub' }, el('summary', { textContent: title }), blurb ? el('p', { textContent: blurb }) : null, ...kids);
 
-  function card(title, blurb, ...kids) {
-    const d = el('details', { className: 'card', open: true }, el('summary', { textContent: title }));
-    if (blurb) d.append(el('p', { className: 'note', textContent: blurb }));
-    kids.forEach((k) => d.append(k));
-    return d;
-  }
-
-  function buildDesigner() {
-    const D = $('#designer');
-    drive.spindle = drive.spindle || {};
-    drive.tones = drive.tones || [];
-    drive.body = drive.body || [];
-    drive.noise = drive.noise || { db: NOISE_HZ.map(() => -70) };
-    if (!drive.noise.db || drive.noise.db.length < NOISE_HZ.length) drive.noise.db = NOISE_HZ.map((_, i) => (drive.noise.db || [])[i] ?? -70);
-    if (drive.master == null) drive.master = 1;
+  function buildAdvanced() {
+    const D = $('#advBody');
+    const d = drive;
+    d.spindle = d.spindle || {}; d.tones = d.tones || []; d.body = d.body || [];
+    d.noise = d.noise || { db: NOISE_HZ.map(() => -70) };
+    if (!d.noise.db || d.noise.db.length < NOISE_HZ.length) d.noise.db = NOISE_HZ.map((_, i) => (d.noise.db || [])[i] ?? -70);
+    if (d.master == null) d.master = 1;
     const kids = [];
-
-    kids.push(card('Spindle', 'The rotation, spin-up and coast-down. Friction shapes the coast: near 0 it slows like a decaying exponential, at 1 in a straight line. Flutter makes each tone\'s level wander, as real ones do.',
-      fields(drive.spindle, SPINDLE, SPINDLE_DEF)));
-
-    drive.tones.sort((a, b) => a.order - b.order);
-    kids.push(card('Tones', 'Each tone is an order (a multiple of the rotation rate, may be fractional) and its level at full speed. Motor tones follow the drive current: louder spinning up, silent once the power is off.',
-      table(drive.tones, [['order', 'Order', 0.001], ['db', 'dB', 0.5], ['motor', 'Motor', 'check']], () => ({ order: 1, db: -50 }))));
-
-    drive.bed = drive.bed || clone(BED_DEF);
-    kids.push(card('Tone bed', 'Faint extra tones, placed by the seed: what makes a designed drive sound less like a few clean sines. Fitted drives get theirs from the recording (count 0).',
-      fields(drive.bed, BED, BED_DEF)));
-
-    const curveNote = el('p', { className: 'note' });
-    const clearCurve = el('button', { className: 'btn', textContent: 'Clear the fitted curve' });
-    const showCurve = () => {
-      const n = (drive.bodyCurve || []).length;
-      curveNote.textContent = n ? `Fitted body curve: ${n} points (from the spindown), as well as the resonances above.` : 'No fitted body curve.';
-      clearCurve.hidden = !n;
-    };
-    clearCurve.addEventListener('click', () => { delete drive.bodyCurve; showCurve(); pushParams(); });
-    showCurve();
-    kids.push(card('Body', 'Resonances every tone and noise band passes through. As the speed changes, the tones sweep through them and light up in turn.',
-      table(drive.body, [['hz', 'Hz', 1], ['q', 'Q', 0.1], ['db', 'dB', 0.5]], () => ({ hz: 800, q: 4, db: 6 })), curveNote, el('div', { className: 'row' }, clearCurve)));
-
+    kids.push(sub('Spindle', 'The rotation, spin-up and coast-down. Friction shapes the coast: near 0 it slows like a decaying exponential, at 1 in a straight line. Flutter makes each tone\'s level wander, as real ones do.', fields(d.spindle, SPINDLE, SPINDLE_DEF)));
+    d.tones.sort((a, b) => a.order - b.order);
+    kids.push(sub(`Tones (${d.tones.length})`, 'Each tone is an order (a multiple of the rotation rate, may be fractional) and its level at full speed. Motor tones follow the drive current: louder spinning up, silent once the power is off.',
+      table(d.tones, [['order', 'Order', 0.001], ['db', 'dB', 0.5], ['motor', 'Motor', 'check']], () => ({ order: 1, db: -50 }))));
+    d.bed = d.bed || clone(BED_DEF);
+    kids.push(sub('Tone bed', 'Faint extra tones, placed by the seed: what makes a designed drive sound less like a few clean sines. Fitted drives get theirs from the recording (count 0).', fields(d.bed, BED, BED_DEF)));
+    const n = (d.bodyCurve || []).length;
+    const clearCurve = el('button', { className: 'btn', textContent: 'Clear the fitted curve', hidden: !n });
+    clearCurve.addEventListener('click', () => { delete d.bodyCurve; clearCurve.hidden = true; pushParams(); });
+    kids.push(sub('Body', 'Resonances every tone and noise band passes through. As the speed changes, the tones sweep through them and light up in turn.' + (n ? ` A fitted body curve (${n} points, from the spindown) applies as well.` : ''),
+      table(d.body, [['hz', 'Hz', 1], ['q', 'Q', 0.1], ['db', 'dB', 0.5]], () => ({ hz: 800, q: 4, db: 6 })), el('div', { className: 'row' }, clearCurve)));
     const bands = el('div', { className: 'bands' });
     NOISE_HZ.forEach((hz, i) => {
-      const n = el('input', { type: 'number', step: 0.5, value: drive.noise.db[i] });
-      n.addEventListener('change', () => { const v = Number(n.value); if (isFinite(v)) { drive.noise.db[i] = v; pushParams(); } });
-      bands.append(el('label', {}, hz >= 1000 ? (hz / 1000).toFixed(hz >= 10000 ? 0 : 1) + 'k' : Math.round(hz) + '', n));
+      const inp = el('input', { type: 'number', step: 0.5, value: d.noise.db[i] });
+      inp.addEventListener('change', () => { const v = Number(inp.value); if (isFinite(v)) { d.noise.db[i] = v; pushParams(); } });
+      bands.append(el('label', {}, hz >= 1000 ? (hz / 1000).toFixed(hz >= 10000 ? 0 : 1) + 'k' : Math.round(hz) + '', inp));
     });
-    const shift = (dB) => { drive.noise.db = drive.noise.db.map((v) => v + dB); bands.querySelectorAll('input').forEach((n, i) => { n.value = drive.noise.db[i].toFixed(1); }); pushParams(); };
+    const shift = (dB) => { d.noise.db = d.noise.db.map((v) => v + dB); bands.querySelectorAll('input').forEach((x, i) => { x.value = d.noise.db[i].toFixed(1); }); pushParams(); };
     const up = el('button', { className: 'btn', textContent: 'All +1 dB' }), down = el('button', { className: 'btn', textContent: 'All −1 dB' });
     up.addEventListener('click', () => shift(1)); down.addEventListener('click', () => shift(-1));
-    kids.push(card('Air noise', 'Half-octave bands of noise (dB at full speed), louder and higher with speed.',
-      fields(drive.noise, NOISE, NOISE_DEF), bands, el('div', { className: 'row' }, up, down)));
-
-    // Actuator: the fields shown depend on the kind.
-    const hasAct = !!drive.actuator;
-    drive.actuator = drive.actuator || clone(ACT_DEF);
-    const a = drive.actuator;
-    a.modes = a.modes || [];
-    const actBody = el('div', { style: 'display:grid;gap:10px' });
+    kids.push(sub('Air noise', 'Half-octave bands of noise (dB at full speed), louder and higher with speed.', fields(d.noise, NOISE, NOISE_DEF), bands, el('div', { className: 'row' }, up, down)));
+    d.actuator = d.actuator || clone(ACT_DEF);
+    const a = d.actuator; a.modes = a.modes || [];
+    const actBody = el('div', { className: 'col' });
     const kind = el('select', { 'aria-label': 'Actuator kind' }, el('option', { value: 'voice', textContent: 'Voice coil' }), el('option', { value: 'stepper', textContent: 'Stepper' }));
     kind.value = a.kind || 'voice';
-    const drawAct = () => {
-      const k = kind.value;
-      actBody.replaceChildren(
-        fields(a, ACT.filter((s) => !s[6] || s[6] === k), ACT_DEF),
-        el('h3', { textContent: 'Arm modes' }),
-        table(a.modes, [['hz', 'Hz', 1], ['q', 'Q', 0.1], ['db', 'dB', 0.5]], () => ({ hz: 330, q: 3, db: 6 })));
-    };
+    const drawAct = () => actBody.replaceChildren(fields(a, ACT.filter((s) => !s[6] || s[6] === kind.value), ACT_DEF), el('h3', { textContent: 'Arm modes' }),
+      table(a.modes, [['hz', 'Hz', 1], ['q', 'Q', 0.1], ['db', 'dB', 0.5]], () => ({ hz: 330, q: 3, db: 6 })));
     kind.addEventListener('change', () => { a.kind = kind.value; drawAct(); pushParams(); });
     drawAct();
-    kids.push(card('Actuator', (hasAct ? '' : 'This drive had no actuator: these are defaults. ') + 'A voice coil pushes the arm then brakes it, longer for further seeks; a stepper moves a step at a time. Clicks, thump and buzz excite the arm\'s modes: most drives rock at 200-500 Hz.',
-      el('div', { className: 'row' }, el('label', { textContent: 'Kind ' }), kind), actBody));
-
-    drive.workload = drive.workload || clone(WORK_DEF);
-    kids.push(card('Workload', 'While busy: after each seek, wait for the sector (up to a revolution) and the transfer. A sequential run steps one track every few revolutions.',
-      fields(drive.workload, WORK, WORK_DEF)));
-
-    // Head events: two scripts of moves, at power on and at power off.
-    drive.heads = drive.heads || {};
-    const H = drive.heads;
-    H.spinup = H.spinup || []; H.spindown = H.spindown || [];
-    const HCOLS = [['t', 'Time (s)', 0.001], ['ms', 'Move (ms)', 0.1], ['db', 'dB', 0.5], ['x', 'To (0-1, blank: auto)', 0.01, 'opt']];
+    kids.push(sub('Actuator', 'Clicks, thump and buzz excite the arm\'s modes: most drives rock at 200-500 Hz.', el('div', { className: 'row' }, el('label', { textContent: 'Kind ' }), kind), actBody));
+    d.workload = d.workload || clone(WORK_DEF);
+    kids.push(sub('Workload', 'While busy: after each seek, wait for the sector (up to a revolution) and the transfer. A sequential run steps one track every few revolutions.', fields(d.workload, WORK, WORK_DEF)));
+    d.heads = d.heads || {};
+    const H = d.heads; H.spinup = H.spinup || []; H.spindown = H.spindown || [];
+    const HCOLS = [['t', 'Time (s)', 0.001], ['ms', 'Move (ms)', 0.1], ['db', 'dB', 0.5], ['x', 'To (blank: auto)', 0.01, 'opt']];
     const lastT = (rows) => rows.reduce((m, h) => Math.max(m, h.t), 0);
-    kids.push(card('Head events', 'What the heads do as the power comes on and goes off, played by the actuator above: each event is a move at a time after the power changed, taking so long, at a level against an ordinary seek of that length. "To" sends it to a place (0 is the outer edge, where a voice coil parks); blank goes as far as the move\'s time takes it. While a script plays, the workload waits. Fitted drives get theirs from spinup.wav and spindown.wav: the motor\'s start-up kicks, loading the heads and calibrating, then the park. Power off and on to hear them.',
-      el('h3', { textContent: `At power on (${H.spinup.length} events)` }),
-      table(H.spinup, HCOLS, () => ({ t: Math.round((lastT(H.spinup) + 0.1) * 1000) / 1000, ms: 8, db: 0 })),
-      el('h3', { textContent: `At power off (${H.spindown.length} events)` }),
-      table(H.spindown, HCOLS, () => ({ t: Math.round((lastT(H.spindown) + 0.1) * 1000) / 1000, ms: 8, db: 0 }))));
-
-    // Grains: optional recorded seeks.
-    const gNote = el('p', { className: 'note' });
-    const gLoad = el('button', { className: 'btn', textContent: 'Load grains WAV…' });
-    const gFile = el('input', { type: 'file', accept: 'audio/*,.wav', hidden: true });
-    const gMix = el('div');
-    const showGrains = () => {
-      const g = drive.grains;
-      if (!g) { gNote.textContent = 'None: the seeks are pure synthesis. Make grains from a pack with grains.js, then load the drive and its .grains.wav.'; gMix.replaceChildren(); gLoad.hidden = true; return; }
-      gLoad.hidden = false;
-      gNote.textContent = `${g.items.length} grains in ${g.file}: ${grainsBuf ? 'loaded' : 'load the WAV to hear them'}. Mix 0 is the synthesis, 1 the recording.`;
-      gMix.replaceChildren(fields(g, [['mix', 'Mix', 0, 1, 0.01, '']], { mix: 1 }));
-    };
-    gLoad.addEventListener('click', () => gFile.click());
-    gFile.addEventListener('change', async () => {
-      const f = gFile.files[0]; if (!f) return;
-      if (!ctx) await startAudio();
-      const buf = await ctx.decodeAudioData(await f.arrayBuffer());
-      grainsBuf = buf.getChannelData(0).slice();
-      grainsLen = drive.grains.items.reduce((m, it) => Math.max(m, it.start + it.len), 0);
-      send({ type: 'grains', data: grainsBuf });
-      pushParams(); showGrains();
-    });
-    showGrains();
-    kids.push(card('Recorded seeks', 'Optional: real seek sounds, played with or instead of the synthesised ones.', gNote, gMix, el('div', { className: 'row' }, gLoad, gFile)));
-
-    kids.push(card('Output', '', fields(drive, [['master', 'Master', 0, 4, 0.01, '×']], { master: 1 })));
+    kids.push(sub('Head events', 'Moves at a time after the power changed, taking so long, at a level against an ordinary seek of that length. "To" sends it to a place (0 the outer edge, 1 the inner; a ramp is just below 0); blank goes as far as the move\'s time takes it.',
+      el('h3', { textContent: `At power on (${H.spinup.length})` }), table(H.spinup, HCOLS, () => ({ t: Math.round((lastT(H.spinup) + 0.1) * 1000) / 1000, ms: 8, db: 0 })),
+      el('h3', { textContent: `At power off (${H.spindown.length})` }), table(H.spindown, HCOLS, () => ({ t: Math.round((lastT(H.spindown) + 0.1) * 1000) / 1000, ms: 8, db: 0 }))));
+    // Grains: only for a drive that has them.
+    if (d.grains) {
+      const gNote = el('p', { className: 'note' });
+      const gLoad = el('button', { className: 'btn', textContent: 'Load the grains WAV…' });
+      const gFile = el('input', { type: 'file', accept: 'audio/*,.wav', hidden: true });
+      const show = () => { gNote.textContent = `${d.grains.items.length} grains in ${d.grains.file}: ${grains ? 'loaded' : 'load the WAV to hear them'}. Mix 0 is the synthesis, 1 the recording.`; gLoad.hidden = !!grains; };
+      gLoad.addEventListener('click', () => gFile.click());
+      gFile.addEventListener('change', async () => {
+        const f = gFile.files[0]; if (!f) return;
+        await ensureAudio();
+        const buf = await ctx.decodeAudioData(await f.arrayBuffer());
+        // The browser resamples on decoding: keep the places in step.
+        grains = { data: null, sr: ctx.sampleRate, buf: buf.getChannelData(0).slice(), len: d.grains.items.reduce((m, it) => Math.max(m, it.start + it.len), 0) };
+        if (mode === 'import') importGrains = grains;
+        sendGrains(); pushParams(); show();
+      });
+      show();
+      kids.push(sub('Recorded seeks', '', gNote, fields(d.grains, [['mix', 'Mix', 0, 1, 0.01, '']], { mix: 0 }), el('div', { className: 'row' }, gLoad, gFile)));
+    }
+    kids.push(sub('Output', '', fields(d, [['master', 'Master', 0, 6, 0.01, '×']], { master: 1 })));
     D.replaceChildren(...kids);
   }
-
-  function loadDrive(d) {
-    drive = clone(d);
-    grainsBuf = null; grainsLen = 0;
-    if (send) send({ type: 'grains', data: null });
-    buildDesigner();
-    pushParams();
-  }
-
-  // Presets and files.
-  const sel = $('#preset');
-  Object.keys(DRIVES).forEach((k) => sel.append(el('option', { value: k, textContent: DRIVES[k].name + (k.startsWith('fitted/') ? ' (fitted)' : '') })));
-  sel.addEventListener('change', () => loadDrive(DRIVES[sel.value]));
-  $('#open').addEventListener('click', () => $('#openFile').click());
-  $('#openFile').addEventListener('change', async (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    try {
-      const d = JSON.parse(await f.text());
-      if (d.version !== 3) throw new Error('not a v2 drive (version 3)');
-      loadDrive(d);
-    } catch (err) { alert('Could not open ' + f.name + ': ' + err.message); }
-    e.target.value = '';
-  });
-  $('#save').addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(drive, null, 1) + '\n'], { type: 'application/json' });
-    const a = el('a', { href: URL.createObjectURL(blob), download: (drive.name || 'drive').replace(/[^\w-]+/g, '_') + '.json' });
-    document.body.append(a); a.click(); a.remove();
-  });
+  $('#adv').addEventListener('toggle', () => { if ($('#adv').open) buildAdvanced(); });
 
   // ---------- drawing ----------
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-  function fit(cv) {
-    const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  function fitCanvas(cv) {
+    const r = cv.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
     const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     return { g: cv.getContext('2d'), w, h, dpr };
   }
+
+  // The drive from above: platter, hub, arm and head. The head's place x runs 0 (the
+  // outer edge of the data) to 1 (the inner); a ramp is just outside the platter.
+  const view = $('#view');
+  let geom = null, spin = 0, lastT = performance.now(), dispX = 0.1;
+  function headPoint(xs, g) {
+    const r = g.ro - xs * (g.ro - g.ri);
+    const D = Math.hypot(g.px - g.cx, g.py - g.cy), base = Math.atan2(g.cy - g.py, g.cx - g.px);
+    const cosT = Math.max(-1, Math.min(1, (g.L * g.L + D * D - r * r) / (2 * g.L * D)));
+    const th = base + Math.acos(cosT);
+    return [g.px + g.L * Math.cos(th), g.py + g.L * Math.sin(th), th];
+  }
+  function roundRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+  function drawView(now) {
+    const { g, w: W, h: H, dpr } = fitCanvas(view);
+    const C = { casting: css('--casting'), edge: css('--casting-edge'), pa: css('--platter-a'), pb: css('--platter-b'), ink: css('--ink'), line: css('--line'), accent: css('--accent'), led: css('--led-off'), muted: css('--muted') };
+    g.clearRect(0, 0, W, H);
+    const R = Math.min(W * 0.36, H * 0.44), cx = W * 0.4, cy = H * 0.5;
+    geom = { cx, cy, R, ro: R * 0.96, ri: R * 0.96 * 0.45, px: cx + R * 1.28, py: cy + R * 0.82, L: R * 1.38, dpr };
+    const m = 12 * dpr;
+    g.fillStyle = C.casting; g.strokeStyle = C.edge; g.lineWidth = 2 * dpr;
+    roundRect(g, m, m, W - 2 * m, H - 2 * m, 16 * dpr); g.fill(); g.stroke();
+    // Platter, with a few track rings
+    const grad = g.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
+    grad.addColorStop(0, C.pb); grad.addColorStop(0.55, C.pa); grad.addColorStop(1, C.pb);
+    g.fillStyle = grad; g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = C.edge; g.lineWidth = dpr; g.stroke();
+    g.strokeStyle = C.line; g.globalAlpha = 0.6;
+    for (let i = 0; i <= 6; i++) { const r = geom.ri + (geom.ro - geom.ri) * i / 6; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke(); }
+    g.globalAlpha = 1;
+    // Rotation: an index line while slow enough to see, a blur once fast.
+    const rpm = tel ? tel.rpm : 0;
+    const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
+    spin = (spin + (rpm / 60) * Math.PI * 2 * dt) % (Math.PI * 2);
+    const vis = Math.max(0, 1 - rpm / 500);
+    if (vis > 0.02) {
+      g.strokeStyle = C.ink; g.globalAlpha = 0.5 * vis; g.lineWidth = 3 * dpr;
+      g.beginPath(); g.moveTo(cx + Math.cos(spin) * R * 0.3, cy + Math.sin(spin) * R * 0.3); g.lineTo(cx + Math.cos(spin) * R * 0.98, cy + Math.sin(spin) * R * 0.98); g.stroke(); g.globalAlpha = 1;
+    }
+    if (rpm > 300) {
+      g.strokeStyle = C.pb; g.globalAlpha = Math.min(0.5, rpm / 6000); g.lineWidth = R * 0.05;
+      g.beginPath(); g.arc(cx, cy, R * 0.72, -0.6, 0.1); g.stroke();
+      g.beginPath(); g.arc(cx, cy, R * 0.72, Math.PI - 0.6, Math.PI + 0.1); g.stroke(); g.globalAlpha = 1;
+    }
+    // The landing zone, by the hub, for drives that park there.
+    const park = drive && drive.design ? drive.design.park : drive && drive.heads && drive.heads.rest != null ? (drive.heads.rest < 0 ? 'ramp' : drive.heads.rest >= 0.99 ? 'zone' : 'none') : 'none';
+    if (park === 'zone') { g.strokeStyle = C.muted; g.setLineDash([4 * dpr, 4 * dpr]); g.lineWidth = dpr; g.beginPath(); g.arc(cx, cy, geom.ri * 0.92, 0, Math.PI * 2); g.stroke(); g.setLineDash([]); }
+    // Hub
+    g.fillStyle = C.casting; g.beginPath(); g.arc(cx, cy, R * 0.22, 0, Math.PI * 2); g.fill(); g.strokeStyle = C.edge; g.stroke();
+    g.fillStyle = C.edge;
+    for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3 + spin * (vis > 0.02 ? 1 : 0); g.beginPath(); g.arc(cx + Math.cos(a) * R * 0.14, cy + Math.sin(a) * R * 0.14, R * 0.018, 0, Math.PI * 2); g.fill(); }
+    const stepper = drive && drive.actuator && drive.actuator.kind === 'stepper';
+    if (park === 'ramp' && !stepper) {
+      const [rx, ry] = headPoint(-0.08, geom);
+      g.fillStyle = C.edge; g.save(); g.translate(rx, ry); g.rotate(Math.atan2(ry - cy, rx - cx)); g.fillRect(-R * 0.02, -R * 0.05, R * 0.12, R * 0.1); g.restore();
+    }
+    // Arm and head
+    const target = tel ? tel.head : drive && drive.heads && drive.heads.rest != null ? drive.heads.rest : 0.1;
+    dispX += (target - dispX) * 0.6;
+    const [hx, hy, th] = headPoint(dispX, geom);
+    g.strokeStyle = C.ink; g.lineCap = 'round'; g.globalAlpha = 0.85;
+    g.lineWidth = R * 0.07; g.beginPath(); g.moveTo(geom.px, geom.py); g.lineTo(geom.px + (hx - geom.px) * 0.55, geom.py + (hy - geom.py) * 0.55); g.stroke();
+    g.lineWidth = R * 0.03; g.beginPath(); g.moveTo(geom.px + (hx - geom.px) * 0.5, geom.py + (hy - geom.py) * 0.5); g.lineTo(hx, hy); g.stroke();
+    g.globalAlpha = 1;
+    g.fillStyle = C.edge; g.save(); g.translate(geom.px, geom.py); g.rotate(th + Math.PI);
+    if (stepper) g.fillRect(-R * 0.12, -R * 0.12, R * 0.24, R * 0.24);
+    else { g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, R * 0.32, -0.35, 0.35); g.closePath(); g.fill(); }
+    g.restore();
+    g.fillStyle = C.ink; g.beginPath(); g.arc(geom.px, geom.py, R * 0.06, 0, Math.PI * 2); g.fill();
+    g.fillStyle = tel && tel.seeking ? C.accent : C.ink; g.beginPath(); g.arc(hx, hy, R * 0.03, 0, Math.PI * 2); g.fill();
+    // Activity LED: lit while the PC keeps it busy.
+    const busy = tel && tel.busy && tel.powered;
+    g.fillStyle = busy ? C.accent : C.led;
+    if (busy) { g.shadowColor = C.accent; g.shadowBlur = 12 * dpr; }
+    g.beginPath(); g.arc(W - m - 20 * dpr, m + 20 * dpr, 6 * dpr, 0, Math.PI * 2); g.fill(); g.shadowBlur = 0;
+  }
+  view.addEventListener('pointerdown', (e) => {
+    if (!geom || !send) return;
+    const r = view.getBoundingClientRect(), px = (e.clientX - r.left) * geom.dpr, py = (e.clientY - r.top) * geom.dpr;
+    const rad = Math.hypot(px - geom.cx, py - geom.cy);
+    if (rad < geom.ri * 0.9 || rad > geom.ro * 1.05) return;
+    send({ type: 'seek', x: Math.max(0, Math.min(1, (geom.ro - rad) / (geom.ro - geom.ri))) });
+  });
+
   const F0 = 30, F1 = 16000;
   const xOf = (f, w) => Math.log(f / F0) / Math.log(F1 / F0) * w;
   let fbuf = null;
-
-  function drawHead() {
-    const { g, w, h, dpr } = fit(headCv);
-    g.clearRect(0, 0, w, h);
-    g.fillStyle = css('--grid');
-    for (let i = 0; i <= 10; i++) g.fillRect(Math.round(i / 10 * (w - 1)), h * 0.35, dpr, h * 0.3);
-    const x = (tel ? tel.head : 0.1) * w;
-    g.fillStyle = tel && tel.seeking ? css('--accent') : css('--trace');
-    g.fillRect(x - 3 * dpr, 4 * dpr, 6 * dpr, h - 8 * dpr);
-  }
-
   function drawSpec() {
-    const { g, w, h, dpr } = fit($('#spec'));
+    const { g, w, h, dpr } = fitCanvas($('#spec'));
     g.clearRect(0, 0, w, h);
-    g.strokeStyle = css('--grid'); g.lineWidth = dpr; g.fillStyle = css('--muted'); g.font = `${11 * dpr}px ${css('--mono')}`;
-    for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) {
-      const x = xOf(f, w); g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
-      g.fillText(f >= 1000 ? f / 1000 + 'k' : String(f), x + 3 * dpr, h - 4 * dpr);
-    }
+    g.strokeStyle = css('--grid'); g.lineWidth = dpr; g.fillStyle = css('--muted'); g.font = `${10 * dpr}px ${css('--mono')}`;
+    for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) { const x = xOf(f, w); g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); g.fillText(f >= 1000 ? f / 1000 + 'k' : String(f), x + 3 * dpr, h - 4 * dpr); }
     const yOf = (db) => h * (1 - (db + 120) / 100);
-    for (const db of [-100, -80, -60, -40]) { const y = yOf(db); g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); g.fillText(db + ' dB', 3 * dpr, y - 3 * dpr); }
-    // The drive's tones, where they are now.
-    if (tel && drive && tel.fr > 0) {
+    if (tel && drive && tel.fr > 0 && !clipSrc) {
       g.fillStyle = css('--tone');
       for (const t of drive.tones) { const f = t.order * tel.fr; if (f > F0 && f < F1) g.fillRect(xOf(f, w) - dpr / 2, 0, dpr, 8 * dpr); }
     }
-    const plot = (an, col) => {
-      if (!an) return;
-      if (!fbuf || fbuf.length !== an.frequencyBinCount) fbuf = new Float32Array(an.frequencyBinCount);
-      an.getFloatFrequencyData(fbuf);
-      const hz = ctx.sampleRate / an.fftSize;
-      g.strokeStyle = col; g.lineWidth = 1.5 * dpr; g.beginPath();
-      let started = false;
-      for (let k = 1; k < fbuf.length; k++) {
-        const f = k * hz; if (f < F0 || f > F1) continue;
-        const x = xOf(f, w), y = yOf(fbuf[k]);
-        if (!started) { g.moveTo(x, y); started = true; } else g.lineTo(x, y);
-      }
-      g.stroke();
-    };
-    if (ab !== 'synth' && refBuf) plot(anRef, css('--muted'));
-    if (ab !== 'ref') plot(anSynth, css('--trace'));
+    if (!anSynth) return;
+    if (!fbuf || fbuf.length !== anSynth.frequencyBinCount) fbuf = new Float32Array(anSynth.frequencyBinCount);
+    anSynth.getFloatFrequencyData(fbuf);
+    const hz = ctx.sampleRate / anSynth.fftSize;
+    g.strokeStyle = css('--trace'); g.lineWidth = 1.5 * dpr; g.beginPath();
+    let started = false;
+    for (let k = 1; k < fbuf.length; k++) { const f = k * hz; if (f < F0 || f > F1) continue; const x = xOf(f, w), y = yOf(fbuf[k]); if (!started) { g.moveTo(x, y); started = true; } else g.lineTo(x, y); }
+    g.stroke();
   }
-
+  const hexRgb = (hex) => { const n = parseInt(hex.replace('#', ''), 16); return `${n >> 16 & 255},${n >> 8 & 255},${n & 255}`; };
   function drawGram() {
-    const cv = $('#gram'), { g, w, h } = fit(cv);
-    const an = ab === 'ref' && refBuf ? anRef : anSynth;
-    if (!an) { g.clearRect(0, 0, w, h); return; }
-    if (!fbuf || fbuf.length !== an.frequencyBinCount) fbuf = new Float32Array(an.frequencyBinCount);
-    an.getFloatFrequencyData(fbuf);
-    const hz = ctx.sampleRate / an.fftSize, col = 2;
-    // Scroll left by a column, then paint the newest at the right (frequency up the side).
-    g.drawImage(cv, -col, 0);
-    g.clearRect(w - col, 0, col, h);
+    const cv = $('#gram'), { g, w, h } = fitCanvas(cv);
+    if (!anSynth || !fbuf) return;
+    const hz = ctx.sampleRate / anSynth.fftSize, col = 2;
+    g.drawImage(cv, -col, 0); g.clearRect(w - col, 0, col, h);
     const rgb = hexRgb(css('--accent'));
     for (let y = 0; y < h; y++) {
       const f = F0 * Math.pow(F1 / F0, 1 - y / h), k = Math.min(fbuf.length - 1, Math.round(f / hz));
-      const v = Math.max(0, Math.min(1, (fbuf[k] + 110) / 80));
-      g.fillStyle = `rgba(${rgb},${v.toFixed(3)})`;
-      g.fillRect(w - col, y, col, 1);
+      g.fillStyle = `rgba(${rgb},${Math.max(0, Math.min(1, (fbuf[k] + 110) / 80)).toFixed(3)})`; g.fillRect(w - col, y, col, 1);
     }
   }
-  const hexRgb = (hex) => { const n = parseInt(hex.replace('#', ''), 16); return `${n >> 16 & 255},${n >> 8 & 255},${n & 255}`; };
-
-  function frame() {
+  function stateName(t) {
+    if (!t.powered) return t.rpm > 1 ? (t.script ? 'Parking' : 'Spinning down') : 'Off';
+    if (t.state === 'spinup') return t.script && t.rpm < 1 ? 'Starting' : 'Spinning up';
+    if (t.script) return 'Calibrating';
+    return t.busy ? (t.seeking ? 'Seeking' : 'Reading') : 'Ready';
+  }
+  function frame(now) {
     if (tel) {
       $('#rRpm').textContent = Math.round(tel.rpm);
-      $('#rState').textContent = tel.state + (tel.script ? ' · heads' : '');
-      $('#rHead').textContent = Math.round(tel.head * 100) + '%';
-      $('#rLevel').textContent = tel.peak > 0 ? (20 * Math.log10(tel.peak)).toFixed(1) : '-';
+      $('#rState').textContent = stateName(tel);
+      $('#rHead').textContent = Math.round(Math.max(0, Math.min(1, tel.head)) * 100);
+      $('#rLevel').textContent = tel.peak > 0 ? (20 * Math.log10(tel.peak)).toFixed(1) : '–';
     }
-    drawHead();
-    if (ctx) { drawSpec(); drawGram(); } else drawSpec();
+    drawView(now);
+    drawSpec();
+    if (ctx) drawGram();
     requestAnimationFrame(frame);
   }
 
-  loadDrive(DRIVES[sel.value]);
+  buildParts();
+  useDesign(DESIGNS[3]);
   requestAnimationFrame(frame);
 })();
 </script>

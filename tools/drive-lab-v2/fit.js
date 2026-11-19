@@ -210,13 +210,27 @@ function fitSpinup(pts) {
   return Math.sqrt(best / pts.length) < 0.08 ? bestT : null;
 }
 
-function fitPack(dir, opts) {
+// Fits a drive from a pack's recordings, already read: audio is { idle, spinup?,
+// spindown?, access? }, each { x (samples, -1..1), sr }, all at one rate. Runs in
+// Node (fitPack) and in the Lab page's worker. opts.progress(step, label) is called
+// as each step starts.
+const STEPS = [
+  ['tones', 'Speed, tones and air noise (idle)'], ['flutter', 'How the tones wander (idle)'],
+  ['spinup', 'Spin-up time (spinup)'], ['spindown', 'Coast-down and the body (spindown)'],
+  ['seeks', 'The arm and its seeks (access)'], ['heads', 'Head events at power on and off (spinup, spindown)'],
+];
+function fitAudio(name, audio, opts) {
   opts = opts || {};
-  const name = path.basename(path.resolve(dir));
-  const idle = readWav(path.join(dir, 'idle.wav')), sr = idle.sr;
+  const progress = opts.progress || (() => {});
+  const label = (k) => STEPS.find((s) => s[0] === k)[1];
+  const idle = audio.idle;
+  if (!idle) throw new Error(name + ': no idle.wav');
+  const sr = idle.sr;
+  for (const k of Object.keys(audio)) if (audio[k] && audio[k].sr !== sr) throw new Error(`${name}: ${k}.wav is ${audio[k].sr} Hz, idle.wav ${sr} Hz (a pack has one rate)`);
+  progress('tones', label('tones'));
   const { tones, f, floorP, df } = findTones(idle.x, sr);
   const fr = opts.rpm ? opts.rpm / 60 : findRotation(tones);
-  if (!fr) throw new Error(name + ': no rotation rate found; pass --rpm');
+  if (!fr) throw new Error(name + ': no rotation rate found in idle.wav');
   const orders = toOrders(tones, fr);
   const drive = {
     version: 3,
@@ -234,6 +248,7 @@ function fitPack(dir, opts) {
   // Flutter: what the recording's tones wander by, less what the measure itself finds
   // in a steady render (the noise and neighbouring tones move it too).
   // The measure's frames also smooth the flutter, so set it by rendering and correcting.
+  progress('flutter', label('flutter'));
   const realFl = toneFlutter(idle.x, sr, orders, fr), baseFl = toneFlutter(renderIdle(drive, sr, 6), sr, orders, fr);
   const part = (v) => Math.sqrt(Math.max(0, v * v - baseFl * baseFl));
   // Capped at 6 dB: beyond that it warbles (the Ultrastar measures 8, probably tones
@@ -246,39 +261,48 @@ function fitPack(dir, opts) {
   }
   drive.spindle.flutterDb = Math.round(fl * 10) / 10;
   fit.flutter = { real: realFl, base: baseFl };
-  const suPath = path.join(dir, 'spinup.wav');
-  if (fs.existsSync(suPath)) {
-    const w = readWav(suPath);
-    fit.spinupS = fitSpinup(trustedPoints(trackSpeed(w.x, sr, orders, fr, 1), fr, true));
+  if (audio.spinup) {
+    progress('spinup', label('spinup'));
+    fit.spinupS = fitSpinup(trustedPoints(trackSpeed(audio.spinup.x, sr, orders, fr, 1), fr, true));
     if (fit.spinupS) drive.spindle.spinupS = Math.round(Math.min(30, fit.spinupS) * 10) / 10;
   }
   // The spindown: coast time and shape, level against speed, and the body curve.
-  const sdPath = path.join(dir, 'spindown.wav');
-  if (fs.existsSync(sdPath) && !opts.noSpindown) {
-    const w = readWav(sdPath);
-    const pts = trustedPoints(trackSpeed(w.x, sr, orders, fr, -1), fr, false);
-    const r = fitSpindown(w.x, sr, drive, targets, pts.length >= 6 ? pts : null);
+  if (audio.spindown && !opts.noSpindown) {
+    progress('spindown', label('spindown'));
+    const x = audio.spindown.x;
+    const pts = trustedPoints(trackSpeed(x, sr, orders, fr, -1), fr, false);
+    const r = fitSpindown(x, sr, drive, targets, pts.length >= 6 ? pts : null);
     if (r) { applySpindown(drive, r); fit.spindown = r; fit.coastS = r.C; fit.tracked = pts.length >= 6; }
   }
   // The seeks: the actuator and the workload, from access.wav.
-  const acPath = path.join(dir, 'access.wav');
-  if (fs.existsSync(acPath) && !opts.noSeeks) {
-    const r = fitSeeks(readWav(acPath).x, idle.x, sr, drive, { stepper: opts.stepper });
+  if (audio.access && !opts.noSeeks) {
+    progress('seeks', label('seeks'));
+    const r = fitSeeks(audio.access.x, idle.x, sr, drive, { stepper: opts.stepper });
     if (r) { drive.actuator = r.actuator; drive.workload = r.workload; fit.seeks = r; }
   }
   // The head events, played by that actuator: from spinup.wav (the motor's start-up
   // kicks, loading the heads, calibrating) and spindown.wav (the park).
-  if (drive.actuator && !opts.noHeads) {
+  if (drive.actuator && !opts.noHeads && (audio.spinup || audio.spindown)) {
+    progress('heads', label('heads'));
     const heads = {};
     for (const k of ['spinup', 'spindown']) {
-      const p = path.join(dir, k + '.wav');
-      if (!fs.existsSync(p)) continue;
-      const r = fitScript(readWav(p).x, sr, drive, k);
+      if (!audio[k]) continue;
+      const r = fitScript(audio[k].x, sr, drive, k);
       if (r && r.events.length) heads[k] = r.events;
     }
     if (Object.keys(heads).length) drive.heads = heads;
   }
   return { drive, fit };
+}
+
+function fitPack(dir, opts) {
+  const name = path.basename(path.resolve(dir));
+  const audio = {};
+  for (const k of ['idle', 'spinup', 'spindown', 'access']) {
+    const p = path.join(dir, k + '.wav');
+    if (fs.existsSync(p)) audio[k] = readWav(p);
+  }
+  return fitAudio(name, audio, opts);
 }
 
 if (require.main === module) {
@@ -295,4 +319,4 @@ if (require.main === module) {
     (act ? `, ${act.kind === 'stepper' ? `stepper at ${act.stepHz} Hz` : `seeks ${act.trackMs}-${act.fullStrokeMs} ms`}, ${act.modes.length} arm modes, ${fit.seeks.real.rate.toFixed(1)} seeks/s` : ', no seeks'));
 }
 
-module.exports = { fitPack, findTones, findRotation, trackSpeed, toneFlutter };
+module.exports = { fitPack, fitAudio, STEPS, findTones, findRotation, trackSpeed, toneFlutter };

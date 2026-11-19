@@ -5,10 +5,17 @@ A rebuild of the modelled drive, aimed at sounding like the real recordings in
 replace `tools/drive-lab` (and the firmware's `src/drive_engine.*` port) once
 it's ready. Until then v1 stays as it is.
 
-**A drive is always pure synthesis at heart.** You can design one from
-scratch (`drives/designed_7200.json`) or fit one from a recorded pack as a
-starting point, then edit it. Recorded seek sounds will be an optional extra
-per drive, never required.
+**A drive is always pure synthesis at heart.** It's a drive.json of numbers
+(about 3-5 KB), and every sample is made live from it, so it can answer the
+PC's disk activity as the IDE Synth Bay reports it. There are two ways to make
+one, both on the Lab page:
+- **Design a drive** from scratch: choose its hardware (size, speed, platters,
+  motor, bearing, arm, parking, mounting), and `design.js` builds the model.
+- **Import a sample pack**: the page fits a model to the pack's recordings
+  (`fit.js`, run in the browser), to hear against them, edit and save.
+
+Recorded seek sounds (grains) are an optional extra for an imported drive,
+never required.
 
 ## What the recordings showed
 
@@ -121,7 +128,8 @@ The recordings have the same kinds of event, at times that vary from pack to pac
 - **Fitting them:** each event becomes a move at its own time. Its time and
   level are corrected over five rounds: render the events alone, add them to
   the recording's background, and measure that the same way.
-- Designed drives get a hand-written script (see `designed_7200.json`).
+- Designed drives get theirs from `design.js` (see Designing a drive).
+  `drives/designed_7200.json` is an earlier, hand-written example.
 
 ### Recorded seeks (grains), optional
 
@@ -147,6 +155,47 @@ Without `grains`, or with mix 0, the drive is pure synthesis. Grains are about
 the recording's 12/s: its many local seeks all pick the shortest, quietest
 grains.)
 
+## Designing a drive (`design.js`)
+
+`designDrive(choices)` turns plain choices about the hardware into the model.
+The choices are listed in `DESIGN_DEFAULT`, and there are six starting points
+in `PRESETS`, from a 1986 stepper to a 2008 laptop drive. The mapping follows
+the physics where there is some:
+- **Motor:** tones at the commutation rate (6 per pole pair per turn) and its
+  harmonics, the slot rate, and the cogging (the lcm of slots and poles).
+- **Ball bearings:** the defect tones from the bearing's geometry (cage, ball
+  spin, outer and inner race), louder with wear, plus a rumble. A fluid
+  bearing has only a faint whirl at just under half the rotation rate.
+- **Body:** three resonances, lower for bigger drives and more platters, then
+  shaped by the mounting. Bare on a desk loses the low one; a PC case adds a
+  boom at 140 Hz; a rubber sled damps them all.
+- **Air:** noise peaking higher and louder with speed, louder with more
+  platters.
+- **Arm:** a rock at 210/330/560 Hz (5.25/3.5/2.5 inch), lower with more
+  platters, and its overtones.
+- **Head events:**
+  - a start-up kick (harder for heads stuck to a landing zone)
+  - ticks for old motors
+  - the heads loading off the ramp or the landing zone
+  - calibration strokes, a sweep and a few seeks
+  - at power off: the park and latch, a skid for landing-zone drives, and
+    a knock at the stop
+- **Variety:** a seed varies every level by up to ±2 dB and places the tone
+  bed, so "Another like it" gives the same hardware with different small
+  details.
+
+`heads.rest` is where the head sits with the power off: -0.06 on a ramp just
+off the platter, or 1 on the landing zone.
+
+Last, it renders a little and sets the levels:
+- the idle to -20 dBFS RMS, as recorded packs are
+- a full-stroke seek to -4 dBFS (plus the design's seek loudness)
+- no head event above -3 dBFS
+
+The choices are kept in `drive.design`, so a saved design reopens with its
+controls. It takes 100-250 ms, so the page rebuilds the model live as a
+control moves.
+
 ## Tools (Node, no dependencies)
 
 ```sh
@@ -157,8 +206,9 @@ node score.js SAMPLES_DIR [OUT_DIR] [--pack NAME] # fit, render and score every 
 node grains.js PACK_DIR drive.json [--max N]      # optional: add recorded seeks to a drive
 ```
 
-`dsp.js` (FFT, spectra, peaks, bands) has no Node dependencies, so the Lab
-page can fit drives in the browser too (not yet).
+The modules have no Node dependencies, apart from reading files (`fitPack()`,
+`readWav()`). So the Lab page runs the same code: `fitAudio()` fits from
+samples already in memory, and `parseWav()` and `encodeWav()` work on bytes.
 
 ### The Lab page
 
@@ -167,17 +217,50 @@ python3 build.py              # -> drive-lab.html (the page body, as v1's)
 python3 build.py --site DIR   # -> DIR/index.html, a full page to open in a browser
 ```
 
-The page lets you:
-- play a drive live (AudioWorklet): power on and off, busy (random or
-  sequential), and click the head bar to seek there
-- edit every parameter, including tables for the tones, body and arm modes
-- load the drive's grains WAV
-- compare against a recording, with a live spectrum (the tones' current
-  places marked) and a spectrogram
-- open and save drive.json
+`build.py` wraps every module in one `__bundle()`: a small CommonJS with
+`require` and `module.exports`, with `fs` and `path` stubbed. The page calls
+it. The fitting worker gets its source as text, as the AudioWorklet gets
+`makeEngine`.
 
-The presets are the designed and fitted drives, embedded by `build.py`. It
-isn't on GitHub Pages yet; v1 stays there until v2 replaces it.
+**Left: the drive itself.**
+- **The top view:** the platters spin at the drive's real speed, and the arm
+  swings to the head's place. It shows the ramp or the landing zone, a
+  stepper or a voice coil, and the activity LED. Click the platter to seek
+  there, as the Bay's head positions do.
+- **"What the PC is doing":** nothing, random reads, copying a file, or
+  bursts. These are the kinds of activity the Bay reports.
+- **What you're hearing:** a live spectrum, with ticks marking where the
+  drive's tones are now, and a spectrogram.
+
+**Right: two tabs.**
+- **Design a drive:**
+  - pick a starting point, then six illustrated sections (platters and speed,
+    the spindle motor, the bearing, the heads and arm, power on and off, the
+    case and mounting)
+  - each section says what it models and what you'll hear, with two to four
+    controls
+  - "Another like it" changes the seed
+- **Import a sample pack:**
+  1. Choose a folder, or files, or drop them on the page. It shows which WAVs
+     it found and what each one gives the model.
+  2. **Build the model:** a worker runs `fitAudio()` and shows each step. It
+     then cuts grains from access.wav and renders the model at the pack's rate.
+     It takes about 15 s for a 16 kHz pack.
+  3. **Listen:** play the recording or the model, for each of the spin-up,
+     spinning, seeking and spindown. Choose the seek sounds (synthesised,
+     half and half, or recorded), then download drive.json and, if you chose
+     recorded seeks, the grains WAV.
+
+  The nine drives fitted from HDDSynth_Samples are there as examples.
+- **Advanced** (folded away): every number in the model, as tables and fields.
+  The design rebuilds these whenever a design choice changes.
+
+**Saving.** Save writes drive.json. A drive whose seeks are all synthesised is
+saved without its `grains`, so it needs nothing else. Open takes a version 3
+drive.json: a designed one opens in the Design tab with its controls, and any
+other in the Import tab.
+
+It isn't on GitHub Pages yet; v1 stays there until v2 replaces it.
 
 How fitting works:
 1. **Idle** (`fit.js`): the rotation rate, the 40 strongest tones as orders
