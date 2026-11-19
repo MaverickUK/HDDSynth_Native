@@ -1,0 +1,32 @@
+{
+ "version": 3,
+ "name": "Designed 7200",
+ "note": "Designed from scratch, not fitted: a late-90s 7200 rpm 3.5-inch drive. 12-slot, 8-pole motor; ball bearings; a body with three resonances.",
+ "spindle": { "rpm": 7200, "spinupS": 7, "coastS": 9, "speedExp": 2, "motorBoostDb": 6, "jitter": 0.0005, "wobble": 0.15 },
+ "tones": [
+  { "order": 1, "db": -24 },
+  { "order": 2, "db": -36 },
+  { "order": 3, "db": -44 },
+  { "order": 4.37, "db": -50 },
+  { "order": 8, "db": -40, "motor": true },
+  { "order": 12, "db": -33, "motor": true },
+  { "order": 16, "db": -42 },
+  { "order": 24, "db": -34, "motor": true },
+  { "order": 25, "db": -46 },
+  { "order": 36, "db": -44, "motor": true },
+  { "order": 48, "db": -40 },
+  { "order": 49, "db": -50 },
+  { "order": 60, "db": -48 }
+ ],
+ "body": [
+  { "hz": 420, "q": 4, "db": 9 },
+  { "hz": 1350, "q": 6, "db": 7 },
+  { "hz": 3100, "q": 5, "db": 5 }
+ ],
+ "noise": {
+  "db": [-62, -60, -57, -54, -52, -50, -48, -47, -46, -46, -47, -48, -50, -53, -57, -61, -66, -71],
+  "speedExp": 2.5,
+  "follow": 0.5
+ },
+ "master": 1.7
+}
