@@ -1,0 +1,588 @@
+<title>HDD Synth Drive Lab v2</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* A test bench: left, the drive under test (readouts, head, spectrum); right, the
+   designer, one card per part of the drive. Same look as Drive Lab v1. */
+:root {
+  --bg: #E7EAED; --panel: #F5F6F7; --sunk: #DDE1E5; --ink: #1A1E23; --muted: #5A646E; --line: #C9CFD5;
+  --accent: #C25F17; --accent-ink: #FFFFFF; --trace: #2B6B98; --tone: #C25F17; --grid: #D3D8DD;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131619; --panel: #1B1F23; --sunk: #101315; --ink: #E3E7EA; --muted: #95A0AA; --line: #2C3238;
+    --accent: #EE8A3C; --accent-ink: #1A1206; --trace: #69A5D2; --tone: #EE8A3C; --grid: #262B30;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131619; --panel: #1B1F23; --sunk: #101315; --ink: #E3E7EA; --muted: #95A0AA; --line: #2C3238;
+  --accent: #EE8A3C; --accent-ink: #1A1206; --trace: #69A5D2; --tone: #EE8A3C; --grid: #262B30;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 40px;
+}
+.wrap { max-width: 1340px; margin: 0 auto; display: grid; gap: 18px; }
+h1, h2, h3 { font-family: var(--display); margin: 0; text-wrap: balance; }
+h1 { font-size: 24px; } h2 { font-size: 17px; } h3 { font-size: 14px; }
+.mono, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.muted { color: var(--muted); }
+header { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; justify-content: space-between; }
+header .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; min-height: 34px; }
+.btn:hover { border-color: var(--muted); }
+.btn[aria-pressed="true"], .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+select { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-height: 34px; max-width: 100%; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: var(--panel); padding: 6px 10px; cursor: pointer; min-height: 32px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 10px; min-width: 0; }
+.card > p { margin: 0; color: var(--muted); font-size: 13px; }
+.col { display: grid; gap: 18px; min-width: 0; }
+.readouts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 520px) { .readouts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.readout { background: var(--sunk); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+.readout b { display: block; font-family: var(--mono); font-size: 20px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.readout span { font-size: 12px; color: var(--muted); }
+canvas { width: 100%; display: block; background: var(--sunk); border-radius: 8px; }
+#head { height: 46px; cursor: pointer; touch-action: none; }
+#spec { height: 240px; }
+#gram { height: 150px; }
+.fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.field { display: grid; grid-template-columns: minmax(90px, 9rem) minmax(0, 1fr) 4.6rem; gap: 10px; align-items: center; }
+.field label { font-size: 13px; }
+.field input[type=range] { width: 100%; accent-color: var(--accent); }
+.field input[type=number] { width: 100%; background: var(--sunk); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; font-family: var(--mono); font-size: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font-weight: 500; color: var(--muted); padding: 2px 4px; }
+td { padding: 2px 4px; }
+td input[type=number] { width: 100%; min-width: 0; background: var(--sunk); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; font-family: var(--mono); font-size: 12px; }
+.tbl { max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+.x { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 2px 6px; }
+.x:hover { color: var(--accent); }
+.bands { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.bands label { display: grid; gap: 2px; font-size: 11px; color: var(--muted); }
+.bands input { width: 100%; min-width: 0; background: var(--sunk); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; font-family: var(--mono); font-size: 12px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+details > summary { cursor: pointer; font-family: var(--display); font-weight: 600; font-size: 17px; }
+details[open] > summary { margin-bottom: 8px; }
+.note { font-size: 12px; color: var(--muted); }
+footer { color: var(--muted); font-size: 13px; }
+footer a { color: inherit; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Drive Lab v2</h1>
+      <div class="muted">Design the sound of a mechanical hard drive, or start from one fitted to a real recording.</div>
+    </div>
+    <div class="bar">
+      <select id="preset" aria-label="Drive"></select>
+      <button class="btn" id="open">Open…</button>
+      <button class="btn" id="save">Save drive.json</button>
+      <input type="file" id="openFile" accept=".json,application/json" hidden>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="col">
+      <section class="card">
+        <div class="row">
+          <button class="btn primary" id="power" aria-pressed="false">Power on</button>
+          <button class="btn" id="busy" aria-pressed="false" disabled>Busy</button>
+          <div class="seg" id="cls" role="group" aria-label="Workload">
+            <button data-cls="random" aria-pressed="true">Random</button>
+            <button data-cls="sequential" aria-pressed="false">Sequential</button>
+          </div>
+        </div>
+        <div class="readouts">
+          <div class="readout"><b id="rRpm">0</b><span>rpm</span></div>
+          <div class="readout"><b id="rState">off</b><span>spindle</span></div>
+          <div class="readout"><b id="rHead">10%</b><span>head (0 outer, 100 inner)</span></div>
+          <div class="readout"><b id="rLevel">-</b><span>output (dB peak)</span></div>
+        </div>
+        <canvas id="head" aria-label="Head position: click to seek there"></canvas>
+        <p class="note">Click the bar to seek the head there (when the drive is ready).</p>
+      </section>
+
+      <section class="card">
+        <div class="row" style="justify-content: space-between">
+          <h2>Spectrum</h2>
+          <div class="seg" id="ab" role="group" aria-label="Listen to">
+            <button data-ab="synth" aria-pressed="true">Synth</button>
+            <button data-ab="ref" aria-pressed="false" disabled>Recording</button>
+            <button data-ab="both" aria-pressed="false" disabled>Both</button>
+          </div>
+        </div>
+        <canvas id="spec" aria-label="Live spectrum, log frequency; ticks mark the drive's tones"></canvas>
+        <canvas id="gram" aria-label="Spectrogram"></canvas>
+        <div class="row">
+          <button class="btn" id="refOpen">Load a recording (WAV) to compare…</button>
+          <input type="file" id="refFile" accept="audio/*,.wav" hidden>
+          <span class="note" id="refName"></span>
+        </div>
+        <p class="note">Orange ticks: where the drive's tones are now (orders × rotation rate). Blue: the synthesis. Grey: the recording.</p>
+      </section>
+
+      <section class="card">
+        <h2>About</h2>
+        <p>A drive here is pure synthesis: tones locked to the rotation, a body they pass through, air noise in bands, and an arm whose seeks ring its modes. Recorded seek sounds (grains) are an optional extra. The fitted presets come from the sample packs in <a href="https://github.com/MaverickUK/HDDSynth_Samples">HDDSynth_Samples</a> (<code>tools/drive-lab-v2/fit.js</code>); edit any of them, or start from the designed drive.</p>
+      </section>
+    </div>
+
+    <div class="col" id="designer"></div>
+  </div>
+
+  <footer>Part of <a href="https://github.com/MaverickUK/HDDSynth_Native">HDDSynth Native</a> (<code>tools/drive-lab-v2</code>), licensed under the GPLv3. Work in progress: the firmware still runs v1's drive.json.</footer>
+</div>
+
+<script>
+/*ENGINE*/
+</script>
+<script>
+const DRIVES = /*DRIVES*/;
+</script>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const el = (tag, props, ...kids) => { const e = Object.assign(document.createElement(tag), props || {}); kids.forEach((k) => e.append(k)); return e; };
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  const NOISE_HZ = makeEngine(48000).NOISE_HZ;
+
+  let drive = null, grainsBuf = null, grainsLen = 0;
+
+  // ---------- audio ----------
+  let ctx = null, send = null, node = null, synthGain, refGain, anSynth, anRef, refBuf = null, refSrc = null;
+  let powered = false, busy = false, cls = 'random', ab = 'synth', tel = null;
+
+  // The drive as the engine gets it: grains' places scaled if the browser resampled them.
+  function engineDrive() {
+    const d = clone(drive);
+    if (d.grains && grainsBuf && grainsLen) {
+      const k = grainsBuf.length / grainsLen;
+      d.grains.items = d.grains.items.map((it) => ({ ...it, start: Math.round(it.start * k), len: Math.round(it.len * k) }));
+    }
+    return d;
+  }
+  let pushQueued = false;
+  function pushParams() {
+    if (!send || pushQueued) return;
+    pushQueued = true;
+    requestAnimationFrame(() => { pushQueued = false; send({ type: 'params', drive: engineDrive() }); });
+  }
+
+  const workletSource = () => makeEngine.toString() + `
+class DriveProcessor extends AudioWorkletProcessor {
+  constructor() { super(); this.e = makeEngine(sampleRate); this.n = 0; this.ok = false;
+    this.port.onmessage = (ev) => { if (ev.data.type === 'params') this.ok = true; this.e.handle(ev.data); }; }
+  process(inputs, outputs) {
+    const out = outputs[0], o = out[0];
+    if (!this.ok) return true;
+    this.e.process(o, o.length);
+    for (let c = 1; c < out.length; c++) out[c].set(o);
+    this.n += o.length;
+    if (this.n >= sampleRate / 30) { this.n = 0; this.port.postMessage(this.e.telemetry()); }
+    return true;
+  }
+}
+registerProcessor('drive-processor', DriveProcessor);`;
+
+  async function startAudio() {
+    ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    let src;
+    try {
+      const url = URL.createObjectURL(new Blob([workletSource()], { type: 'application/javascript' }));
+      await ctx.audioWorklet.addModule(url);
+      node = new AudioWorkletNode(ctx, 'drive-processor', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+      node.port.onmessage = (ev) => { tel = ev.data; };
+      send = (m) => node.port.postMessage(m);
+      src = node;
+    } catch (err) {
+      // No AudioWorklet: run the same engine on the main thread.
+      const engine = makeEngine(ctx.sampleRate);
+      let ok = false;
+      const sp = ctx.createScriptProcessor(1024, 0, 2);
+      sp.onaudioprocess = (ev) => {
+        const L = ev.outputBuffer.getChannelData(0);
+        if (!ok) { L.fill(0); ev.outputBuffer.getChannelData(1).fill(0); return; }
+        engine.process(L, L.length);
+        ev.outputBuffer.getChannelData(1).set(L);
+        tel = engine.telemetry();
+      };
+      send = (m) => { if (m.type === 'params') ok = true; engine.handle(m); };
+      src = sp;
+    }
+    synthGain = ctx.createGain(); refGain = ctx.createGain();
+    anSynth = ctx.createAnalyser(); anRef = ctx.createAnalyser();
+    [anSynth, anRef].forEach((a) => { a.fftSize = 8192; a.smoothingTimeConstant = 0.6; });
+    src.connect(anSynth); anSynth.connect(synthGain); synthGain.connect(ctx.destination);
+    anRef.connect(refGain); refGain.connect(ctx.destination);
+    send({ type: 'params', drive: engineDrive() });
+    if (grainsBuf) send({ type: 'grains', data: grainsBuf });
+    applyAb();
+    if (refBuf) startRef();
+  }
+
+  $('#power').addEventListener('click', async () => {
+    if (!ctx) await startAudio();
+    if (ctx.state === 'suspended') await ctx.resume();
+    powered = !powered;
+    send({ type: 'power', on: powered });
+    $('#power').setAttribute('aria-pressed', String(powered));
+    $('#power').textContent = powered ? 'Power off' : 'Power on';
+    $('#busy').disabled = !powered;
+    if (!powered && busy) setBusy(false);
+  });
+  function setBusy(on) {
+    busy = on;
+    $('#busy').setAttribute('aria-pressed', String(on));
+    if (send) send({ type: 'busy', on, cls });
+  }
+  $('#busy').addEventListener('click', () => setBusy(!busy));
+  $('#cls').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    cls = b.dataset.cls;
+    document.querySelectorAll('#cls button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    if (busy && send) send({ type: 'busy', on: true, cls });
+  });
+
+  // ---------- head bar: click to seek ----------
+  const headCv = $('#head');
+  headCv.addEventListener('pointerdown', (e) => {
+    if (!send) return;
+    const r = headCv.getBoundingClientRect();
+    send({ type: 'seek', x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) });
+  });
+
+  // ---------- reference recording (A/B) ----------
+  function startRef() {
+    if (!ctx || !refBuf) return;
+    if (refSrc) { try { refSrc.stop(); } catch (e) {} }
+    refSrc = ctx.createBufferSource(); refSrc.buffer = refBuf; refSrc.loop = true;
+    refSrc.connect(anRef); refSrc.start();
+  }
+  function applyAb() {
+    document.querySelectorAll('#ab button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.ab === ab)));
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    synthGain.gain.setTargetAtTime(ab === 'ref' ? 0 : 1, t, 0.02);
+    refGain.gain.setTargetAtTime(ab === 'synth' ? 0 : 1, t, 0.02);
+  }
+  $('#ab').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b || b.disabled) return; ab = b.dataset.ab; applyAb(); });
+  $('#refOpen').addEventListener('click', () => $('#refFile').click());
+  $('#refFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    if (!ctx) await startAudio();
+    try {
+      refBuf = await ctx.decodeAudioData(await f.arrayBuffer());
+      $('#refName').textContent = f.name + ' (loops)';
+      document.querySelectorAll('#ab button').forEach((b) => { b.disabled = false; });
+      startRef();
+    } catch (err) { $('#refName').textContent = 'Could not read ' + f.name; }
+  });
+
+  // ---------- the designer ----------
+  // Field specs: [key, label, min, max, step, unit]
+  const SPINDLE = [
+    ['rpm', 'Speed', 1000, 15000, 1, 'rpm'], ['spinupS', 'Spin-up', 0.5, 30, 0.1, 's'], ['coastS', 'Coast down', 0.5, 40, 0.1, 's'],
+    ['friction', 'Friction', 0.01, 0.999, 0.001, ''], ['speedExp', 'Tones vs speed', 0, 4, 0.05, '^'], ['motorBoostDb', 'Motor boost', 0, 24, 0.5, 'dB'],
+    ['jitter', 'Speed wander', 0, 0.005, 0.0001, ''], ['wobble', 'Wobble', 0, 1, 0.01, ''], ['flutterDb', 'Flutter', 0, 6, 0.1, 'dB'], ['flutterHz', 'Flutter rate', 0.1, 10, 0.1, 'Hz'],
+  ];
+  const SPINDLE_DEF = { friction: 0.082, speedExp: 2, motorBoostDb: 0, jitter: 0, wobble: 0, flutterDb: 0, flutterHz: 2 };
+  const BED = [['count', 'Tones', 0, 40, 1, ''], ['db', 'Level', -90, -20, 0.5, 'dB'], ['maxOrder', 'Up to order', 2, 150, 1, ''], ['fractional', 'Off-order share', 0, 1, 0.01, ''], ['seed', 'Seed', 1, 9999, 1, '']];
+  const BED_DEF = { count: 0, db: -60, maxOrder: 60, fractional: 0.3, seed: 1 };
+  const NOISE = [['speedExp', 'Level vs speed', 0, 5, 0.05, '^'], ['follow', 'Pitch vs speed', 0, 1.5, 0.01, '^']];
+  const NOISE_DEF = { speedExp: 2.5, follow: 0.5 };
+  const ACT = [
+    ['trackMs', 'Track to track', 0.5, 20, 0.1, 'ms', 'voice'], ['fullStrokeMs', 'Full stroke', 2, 150, 0.5, 'ms', 'voice'],
+    ['stepHz', 'Step rate', 50, 1000, 1, 'Hz', 'stepper'], ['strokeSteps', 'Steps per stroke', 2, 1000, 1, '', 'stepper'],
+    ['settleMs', 'Settle', 0.5, 20, 0.1, 'ms'], ['levelExp', 'Long seeks louder', 0, 1.5, 0.01, '^'],
+    ['clickDb', 'Click', -40, 12, 0.5, 'dB'], ['thumpDb', 'Thump', -40, 12, 0.5, 'dB'], ['buzzDb', 'Buzz', -40, 12, 0.5, 'dB'], ['db', 'Seek level', -30, 20, 0.5, 'dB'],
+  ];
+  const ACT_DEF = { kind: 'voice', trackMs: 3, fullStrokeMs: 25, stepHz: 250, strokeSteps: 300, settleMs: 3, levelExp: 0.5, clickDb: -6, thumpDb: 0, buzzDb: -6, db: 0, modes: [] };
+  const WORK = [['gapMs', 'Transfer gap', 0, 200, 0.5, 'ms'], ['locality', 'Local seeks', 0, 1, 0.01, ''], ['seqShare', 'Sequential share', 0, 1, 0.01, ''], ['seqRevs', 'Revs per step', 1, 8, 1, '']];
+  const WORK_DEF = { gapMs: 4, locality: 0.2, seqShare: 0, seqRevs: 2 };
+
+  const fmt = (v, step) => { const dp = step >= 1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step))); return Number(v).toFixed(dp); };
+  function fieldRow(obj, [key, label, min, max, step, unit], defs) {
+    if (obj[key] == null) obj[key] = defs[key];
+    const range = el('input', { type: 'range', min, max, step, value: obj[key], id: 'f' + Math.random().toString(36).slice(2) });
+    const num = el('input', { type: 'number', min, max, step, value: fmt(obj[key], step), 'aria-label': label + (unit ? ' (' + unit + ')' : '') });
+    const set = (v) => { v = Number(v); if (!isFinite(v)) return; obj[key] = v; pushParams(); };
+    range.addEventListener('input', () => { num.value = fmt(range.value, step); set(range.value); });
+    num.addEventListener('change', () => { range.value = num.value; set(num.value); });
+    return el('div', { className: 'field' }, el('label', { htmlFor: range.id, textContent: label + (unit && unit !== '^' ? ' (' + unit + ')' : '') }), range, num);
+  }
+  const fields = (obj, specs, defs) => el('div', { className: 'fields' }, ...specs.map((s) => fieldRow(obj, s, defs)));
+
+  // An editable table of rows (tones, body modes, arm modes).
+  function table(rows, cols, make, after) {
+    const wrap = el('div');
+    const draw = () => {
+      const tb = el('tbody');
+      rows.forEach((r, i) => {
+        const tr = el('tr');
+        cols.forEach(([key, , step]) => {
+          if (step === 'check') {
+            const c = el('input', { type: 'checkbox', checked: !!r[key], 'aria-label': key });
+            c.addEventListener('change', () => { if (c.checked) r[key] = true; else delete r[key]; pushParams(); });
+            tr.append(el('td', {}, c));
+          } else {
+            const n = el('input', { type: 'number', step, value: r[key], 'aria-label': key + ' ' + (i + 1) });
+            n.addEventListener('change', () => { const v = Number(n.value); if (isFinite(v)) { r[key] = v; pushParams(); if (after) after(); } });
+            tr.append(el('td', {}, n));
+          }
+        });
+        const x = el('button', { className: 'x', textContent: '✕', title: 'Remove', 'aria-label': 'Remove row ' + (i + 1) });
+        x.addEventListener('click', () => { rows.splice(i, 1); draw(); pushParams(); if (after) after(); });
+        tr.append(el('td', {}, x));
+        tb.append(tr);
+      });
+      const head = el('tr', {}, ...cols.map(([, label]) => el('th', { textContent: label })), el('th'));
+      wrap.replaceChildren(el('div', { className: 'tbl' }, el('table', {}, el('thead', {}, head), tb)));
+      const add = el('button', { className: 'btn', textContent: '+ Add' });
+      add.addEventListener('click', () => { rows.push(make()); draw(); pushParams(); if (after) after(); });
+      wrap.append(el('div', { className: 'row', style: 'margin-top:6px' }, add));
+    };
+    draw();
+    return wrap;
+  }
+
+  function card(title, blurb, ...kids) {
+    const d = el('details', { className: 'card', open: true }, el('summary', { textContent: title }));
+    if (blurb) d.append(el('p', { className: 'note', textContent: blurb }));
+    kids.forEach((k) => d.append(k));
+    return d;
+  }
+
+  function buildDesigner() {
+    const D = $('#designer');
+    drive.spindle = drive.spindle || {};
+    drive.tones = drive.tones || [];
+    drive.body = drive.body || [];
+    drive.noise = drive.noise || { db: NOISE_HZ.map(() => -70) };
+    if (!drive.noise.db || drive.noise.db.length < NOISE_HZ.length) drive.noise.db = NOISE_HZ.map((_, i) => (drive.noise.db || [])[i] ?? -70);
+    if (drive.master == null) drive.master = 1;
+    const kids = [];
+
+    kids.push(card('Spindle', 'The rotation, spin-up and coast-down. Friction shapes the coast: near 0 it slows like a decaying exponential, at 1 in a straight line. Flutter makes each tone\'s level wander, as real ones do.',
+      fields(drive.spindle, SPINDLE, SPINDLE_DEF)));
+
+    drive.tones.sort((a, b) => a.order - b.order);
+    kids.push(card('Tones', 'Each tone is an order (a multiple of the rotation rate, may be fractional) and its level at full speed. Motor tones follow the drive current: louder spinning up, silent once the power is off.',
+      table(drive.tones, [['order', 'Order', 0.001], ['db', 'dB', 0.5], ['motor', 'Motor', 'check']], () => ({ order: 1, db: -50 }))));
+
+    drive.bed = drive.bed || clone(BED_DEF);
+    kids.push(card('Tone bed', 'Faint extra tones, placed by the seed: what makes a designed drive sound less like a few clean sines. Fitted drives get theirs from the recording (count 0).',
+      fields(drive.bed, BED, BED_DEF)));
+
+    const curveNote = el('p', { className: 'note' });
+    const clearCurve = el('button', { className: 'btn', textContent: 'Clear the fitted curve' });
+    const showCurve = () => {
+      const n = (drive.bodyCurve || []).length;
+      curveNote.textContent = n ? `Fitted body curve: ${n} points (from the spindown), as well as the resonances above.` : 'No fitted body curve.';
+      clearCurve.hidden = !n;
+    };
+    clearCurve.addEventListener('click', () => { delete drive.bodyCurve; showCurve(); pushParams(); });
+    showCurve();
+    kids.push(card('Body', 'Resonances every tone and noise band passes through. As the speed changes, the tones sweep through them and light up in turn.',
+      table(drive.body, [['hz', 'Hz', 1], ['q', 'Q', 0.1], ['db', 'dB', 0.5]], () => ({ hz: 800, q: 4, db: 6 })), curveNote, el('div', { className: 'row' }, clearCurve)));
+
+    const bands = el('div', { className: 'bands' });
+    NOISE_HZ.forEach((hz, i) => {
+      const n = el('input', { type: 'number', step: 0.5, value: drive.noise.db[i] });
+      n.addEventListener('change', () => { const v = Number(n.value); if (isFinite(v)) { drive.noise.db[i] = v; pushParams(); } });
+      bands.append(el('label', {}, hz >= 1000 ? (hz / 1000).toFixed(hz >= 10000 ? 0 : 1) + 'k' : Math.round(hz) + '', n));
+    });
+    const shift = (dB) => { drive.noise.db = drive.noise.db.map((v) => v + dB); bands.querySelectorAll('input').forEach((n, i) => { n.value = drive.noise.db[i].toFixed(1); }); pushParams(); };
+    const up = el('button', { className: 'btn', textContent: 'All +1 dB' }), down = el('button', { className: 'btn', textContent: 'All −1 dB' });
+    up.addEventListener('click', () => shift(1)); down.addEventListener('click', () => shift(-1));
+    kids.push(card('Air noise', 'Half-octave bands of noise (dB at full speed), louder and higher with speed.',
+      fields(drive.noise, NOISE, NOISE_DEF), bands, el('div', { className: 'row' }, up, down)));
+
+    // Actuator: the fields shown depend on the kind.
+    const hasAct = !!drive.actuator;
+    drive.actuator = drive.actuator || clone(ACT_DEF);
+    const a = drive.actuator;
+    a.modes = a.modes || [];
+    const actBody = el('div', { style: 'display:grid;gap:10px' });
+    const kind = el('select', { 'aria-label': 'Actuator kind' }, el('option', { value: 'voice', textContent: 'Voice coil' }), el('option', { value: 'stepper', textContent: 'Stepper' }));
+    kind.value = a.kind || 'voice';
+    const drawAct = () => {
+      const k = kind.value;
+      actBody.replaceChildren(
+        fields(a, ACT.filter((s) => !s[6] || s[6] === k), ACT_DEF),
+        el('h3', { textContent: 'Arm modes' }),
+        table(a.modes, [['hz', 'Hz', 1], ['q', 'Q', 0.1], ['db', 'dB', 0.5]], () => ({ hz: 330, q: 3, db: 6 })));
+    };
+    kind.addEventListener('change', () => { a.kind = kind.value; drawAct(); pushParams(); });
+    drawAct();
+    kids.push(card('Actuator', (hasAct ? '' : 'This drive had no actuator: these are defaults. ') + 'A voice coil pushes the arm then brakes it, longer for further seeks; a stepper moves a step at a time. Clicks, thump and buzz excite the arm\'s modes: most drives rock at 200-500 Hz.',
+      el('div', { className: 'row' }, el('label', { textContent: 'Kind ' }), kind), actBody));
+
+    drive.workload = drive.workload || clone(WORK_DEF);
+    kids.push(card('Workload', 'While busy: after each seek, wait for the sector (up to a revolution) and the transfer. A sequential run steps one track every few revolutions.',
+      fields(drive.workload, WORK, WORK_DEF)));
+
+    // Grains: optional recorded seeks.
+    const gNote = el('p', { className: 'note' });
+    const gLoad = el('button', { className: 'btn', textContent: 'Load grains WAV…' });
+    const gFile = el('input', { type: 'file', accept: 'audio/*,.wav', hidden: true });
+    const gMix = el('div');
+    const showGrains = () => {
+      const g = drive.grains;
+      if (!g) { gNote.textContent = 'None: the seeks are pure synthesis. Make grains from a pack with grains.js, then load the drive and its .grains.wav.'; gMix.replaceChildren(); gLoad.hidden = true; return; }
+      gLoad.hidden = false;
+      gNote.textContent = `${g.items.length} grains in ${g.file}: ${grainsBuf ? 'loaded' : 'load the WAV to hear them'}. Mix 0 is the synthesis, 1 the recording.`;
+      gMix.replaceChildren(fields(g, [['mix', 'Mix', 0, 1, 0.01, '']], { mix: 1 }));
+    };
+    gLoad.addEventListener('click', () => gFile.click());
+    gFile.addEventListener('change', async () => {
+      const f = gFile.files[0]; if (!f) return;
+      if (!ctx) await startAudio();
+      const buf = await ctx.decodeAudioData(await f.arrayBuffer());
+      grainsBuf = buf.getChannelData(0).slice();
+      grainsLen = drive.grains.items.reduce((m, it) => Math.max(m, it.start + it.len), 0);
+      send({ type: 'grains', data: grainsBuf });
+      pushParams(); showGrains();
+    });
+    showGrains();
+    kids.push(card('Recorded seeks', 'Optional: real seek sounds, played with or instead of the synthesised ones.', gNote, gMix, el('div', { className: 'row' }, gLoad, gFile)));
+
+    kids.push(card('Output', '', fields(drive, [['master', 'Master', 0, 4, 0.01, '×']], { master: 1 })));
+    D.replaceChildren(...kids);
+  }
+
+  function loadDrive(d) {
+    drive = clone(d);
+    grainsBuf = null; grainsLen = 0;
+    if (send) send({ type: 'grains', data: null });
+    buildDesigner();
+    pushParams();
+  }
+
+  // Presets and files.
+  const sel = $('#preset');
+  Object.keys(DRIVES).forEach((k) => sel.append(el('option', { value: k, textContent: DRIVES[k].name + (k.startsWith('fitted/') ? ' (fitted)' : '') })));
+  sel.addEventListener('change', () => loadDrive(DRIVES[sel.value]));
+  $('#open').addEventListener('click', () => $('#openFile').click());
+  $('#openFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const d = JSON.parse(await f.text());
+      if (d.version !== 3) throw new Error('not a v2 drive (version 3)');
+      loadDrive(d);
+    } catch (err) { alert('Could not open ' + f.name + ': ' + err.message); }
+    e.target.value = '';
+  });
+  $('#save').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(drive, null, 1) + '\n'], { type: 'application/json' });
+    const a = el('a', { href: URL.createObjectURL(blob), download: (drive.name || 'drive').replace(/[^\w-]+/g, '_') + '.json' });
+    document.body.append(a); a.click(); a.remove();
+  });
+
+  // ---------- drawing ----------
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  function fit(cv) {
+    const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    return { g: cv.getContext('2d'), w, h, dpr };
+  }
+  const F0 = 30, F1 = 16000;
+  const xOf = (f, w) => Math.log(f / F0) / Math.log(F1 / F0) * w;
+  let fbuf = null;
+
+  function drawHead() {
+    const { g, w, h, dpr } = fit(headCv);
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = css('--grid');
+    for (let i = 0; i <= 10; i++) g.fillRect(Math.round(i / 10 * (w - 1)), h * 0.35, dpr, h * 0.3);
+    const x = (tel ? tel.head : 0.1) * w;
+    g.fillStyle = tel && tel.seeking ? css('--accent') : css('--trace');
+    g.fillRect(x - 3 * dpr, 4 * dpr, 6 * dpr, h - 8 * dpr);
+  }
+
+  function drawSpec() {
+    const { g, w, h, dpr } = fit($('#spec'));
+    g.clearRect(0, 0, w, h);
+    g.strokeStyle = css('--grid'); g.lineWidth = dpr; g.fillStyle = css('--muted'); g.font = `${11 * dpr}px ${css('--mono')}`;
+    for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) {
+      const x = xOf(f, w); g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+      g.fillText(f >= 1000 ? f / 1000 + 'k' : String(f), x + 3 * dpr, h - 4 * dpr);
+    }
+    const yOf = (db) => h * (1 - (db + 120) / 100);
+    for (const db of [-100, -80, -60, -40]) { const y = yOf(db); g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); g.fillText(db + ' dB', 3 * dpr, y - 3 * dpr); }
+    // The drive's tones, where they are now.
+    if (tel && drive && tel.fr > 0) {
+      g.fillStyle = css('--tone');
+      for (const t of drive.tones) { const f = t.order * tel.fr; if (f > F0 && f < F1) g.fillRect(xOf(f, w) - dpr / 2, 0, dpr, 8 * dpr); }
+    }
+    const plot = (an, col) => {
+      if (!an) return;
+      if (!fbuf || fbuf.length !== an.frequencyBinCount) fbuf = new Float32Array(an.frequencyBinCount);
+      an.getFloatFrequencyData(fbuf);
+      const hz = ctx.sampleRate / an.fftSize;
+      g.strokeStyle = col; g.lineWidth = 1.5 * dpr; g.beginPath();
+      let started = false;
+      for (let k = 1; k < fbuf.length; k++) {
+        const f = k * hz; if (f < F0 || f > F1) continue;
+        const x = xOf(f, w), y = yOf(fbuf[k]);
+        if (!started) { g.moveTo(x, y); started = true; } else g.lineTo(x, y);
+      }
+      g.stroke();
+    };
+    if (ab !== 'synth' && refBuf) plot(anRef, css('--muted'));
+    if (ab !== 'ref') plot(anSynth, css('--trace'));
+  }
+
+  function drawGram() {
+    const cv = $('#gram'), { g, w, h } = fit(cv);
+    const an = ab === 'ref' && refBuf ? anRef : anSynth;
+    if (!an) { g.clearRect(0, 0, w, h); return; }
+    if (!fbuf || fbuf.length !== an.frequencyBinCount) fbuf = new Float32Array(an.frequencyBinCount);
+    an.getFloatFrequencyData(fbuf);
+    const hz = ctx.sampleRate / an.fftSize, col = 2;
+    // Scroll left by a column, then paint the newest at the right (frequency up the side).
+    g.drawImage(cv, -col, 0);
+    g.clearRect(w - col, 0, col, h);
+    const rgb = hexRgb(css('--accent'));
+    for (let y = 0; y < h; y++) {
+      const f = F0 * Math.pow(F1 / F0, 1 - y / h), k = Math.min(fbuf.length - 1, Math.round(f / hz));
+      const v = Math.max(0, Math.min(1, (fbuf[k] + 110) / 80));
+      g.fillStyle = `rgba(${rgb},${v.toFixed(3)})`;
+      g.fillRect(w - col, y, col, 1);
+    }
+  }
+  const hexRgb = (hex) => { const n = parseInt(hex.replace('#', ''), 16); return `${n >> 16 & 255},${n >> 8 & 255},${n & 255}`; };
+
+  function frame() {
+    if (tel) {
+      $('#rRpm').textContent = Math.round(tel.rpm);
+      $('#rState').textContent = tel.state;
+      $('#rHead').textContent = Math.round(tel.head * 100) + '%';
+      $('#rLevel').textContent = tel.peak > 0 ? (20 * Math.log10(tel.peak)).toFixed(1) : '-';
+    }
+    drawHead();
+    if (ctx) { drawSpec(); drawGram(); } else drawSpec();
+    requestAnimationFrame(frame);
+  }
+
+  loadDrive(DRIVES[sel.value]);
+  requestAnimationFrame(frame);
+})();
+</script>

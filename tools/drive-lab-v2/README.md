@@ -122,7 +122,26 @@ node grains.js PACK_DIR drive.json [--max N]      # optional: add recorded seeks
 ```
 
 `dsp.js` (FFT, spectra, peaks, bands) has no Node dependencies, so the Lab
-page can fit drives in the browser too.
+page can fit drives in the browser too (not yet).
+
+### The Lab page
+
+```sh
+python3 build.py              # -> drive-lab.html (the page body, as v1's)
+python3 build.py --site DIR   # -> DIR/index.html, a full page to open in a browser
+```
+
+The page lets you:
+- play a drive live (AudioWorklet): power on and off, busy (random or
+  sequential), and click the head bar to seek there
+- edit every parameter, including tables for the tones, body and arm modes
+- load the drive's grains WAV
+- compare against a recording, with a live spectrum (the tones' current
+  places marked) and a spectrogram
+- open and save drive.json
+
+The presets are the designed and fitted drives, embedded by `build.py`. It
+isn't on GitHub Pages yet; v1 stays there until v2 replaces it.
 
 How fitting works:
 1. **Idle** (`fit.js`): the rotation rate, the 40 strongest tones as orders

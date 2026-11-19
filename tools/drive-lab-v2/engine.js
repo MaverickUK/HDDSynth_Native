@@ -102,10 +102,13 @@ function makeEngine(sr) {
   function setParams(drive) {
     d = drive;
     const tones = (drive.tones || []).concat(bedTones(drive.bed, (drive.tones || []).length));
+    const had = nTones;
     nTones = Math.min(tones.length, MAX_TONES);
     for (let i = 0; i < nTones; i++) {
       tOrder[i] = tones[i].order; tAmp[i] = dbToAmp(tones[i].db); tMotor[i] = tones[i].motor ? 1 : 0;
-      tPh[i] = rnd();                                 // random start phases: no click of aligned sines
+      // Random start phases (no click of aligned sines), only for new tones: an edit
+      // while playing keeps the others running smoothly (their levels ramp).
+      if (i >= had) { tPh[i] = rnd(); tCur[i] = 0; }
     }
     const sp = drive.spindle || {};
     setFlutter(sp.flutterDb, sp.flutterHz);
