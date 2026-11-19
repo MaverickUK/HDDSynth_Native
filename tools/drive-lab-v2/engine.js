@@ -128,6 +128,7 @@ function makeEngine(sr) {
       // broadband excitation regardless of its Q: narrow modes would otherwise be quieter.
       mGain[i] = dbToAmp(am[i].db) * Math.sqrt(am[i].q / 4);
     }
+    setGrains();
     if (act) {
       seekAmp = dbToAmp(act.db == null ? 0 : act.db);
       thumpAmp = act.thumpDb == null ? 0 : dbToAmp(act.thumpDb);
@@ -197,7 +198,44 @@ function makeEngine(sr) {
     const T = seekTimeS(dist), Tfull = seekTimeS(1);
     // Longer seeks push harder: the excitation grows with the seek's length.
     const A = Math.pow(T / Tfull, act.levelExp == null ? 0.5 : act.levelExp);
-    sk = { x0: headX, x1: x, T, A, t: 0, n: isStepper() ? Math.max(1, Math.round(dist * (act.strokeSteps || 300))) : 0, step: 0 };
+    sk = { x0: headX, x1: x, T, A, t: 0, n: isStepper() ? Math.max(1, Math.round(dist * (act.strokeSteps || 300))) : 0, step: 0, hold: 0 };
+    // How long a seek this is among random ones: two random points are further apart
+    // than d with probability (1 - d)^2. The grains are in order of length, so this
+    // picks short ones for short seeks, as often as the recording had them.
+    if (grainMix > 0) sk.hold = startGrain(1 - (1 - dist) * (1 - dist)) / sr;
+  }
+
+  // ---- recorded seeks (grains), optional ----
+  // drive.grains.items lists each grain's place in the buffer (sent with a 'grains'
+  // message) and its length as measured (ms). Each seek plays one of the three at
+  // its rank among the grains' lengths (not the one just played), on one of two
+  // voices so a grain still ringing isn't cut off. The head waits for the grain.
+  let gBuf = null, gItems = [], grainMix = 0, gLast = -1;
+  const gPos = [0, 0], gEnd = [0, 0];
+  let gNext = 0;
+  function setGrains() {
+    const g = d && d.grains;
+    gItems = g && g.items && gBuf ? g.items.slice().sort((p, q) => p.ms - q.ms) : [];
+    grainMix = gItems.length ? clamp(g.mix == null ? 1 : g.mix, 0, 1) : 0;
+    gSynthGain = Math.cos(grainMix * Math.PI / 2); gGrainGain = Math.sin(grainMix * Math.PI / 2);
+  }
+  let gSynthGain = 1, gGrainGain = 0;
+  // rank: 0 (shortest) to 1 (longest). Returns the grain's length in samples.
+  function startGrain(rank) {
+    const best = Math.round(clamp(rank, 0, 1) * (gItems.length - 1));
+    const lo = Math.max(0, Math.min(best - 1, gItems.length - 3)), hi = Math.min(gItems.length - 1, lo + 2);
+    let k = lo + Math.floor(rnd() * (hi - lo + 1));
+    if (k === gLast && hi > lo) k = k === hi ? lo : k + 1;
+    gLast = k;
+    const it = gItems[k], v = gPos[gNext] < gEnd[gNext] ? 1 - gNext : gNext;   // a free voice if there is one
+    gPos[v] = it.start; gEnd[v] = Math.min(gBuf.length, it.start + it.len);
+    gNext = 1 - v;
+    return gEnd[v] - gPos[v];
+  }
+  function grainSample() {
+    let y = 0;
+    for (let v = 0; v < 2; v++) if (gPos[v] < gEnd[v]) y += gBuf[gPos[v]++];
+    return y;
   }
   // Where the head is during a seek: a stepper moves evenly; a voice coil follows the
   // bang-bang curve (quadratic up to half way, then quadratic down).
@@ -213,7 +251,7 @@ function makeEngine(sr) {
   function workload() {
     if (!act) return;
     // The head is free once it has settled; the tail may still be ringing.
-    if (sk && sk.t < sk.T + settleS()) return;
+    if (sk && sk.t < Math.max(sk.T + settleS(), sk.hold)) return;
     if (pending != null) { startSeek(pending); pending = null; return; }
     if (!busy) return;
     if (gapLeft > 0) { gapLeft -= ctrlDt; return; }
@@ -260,7 +298,7 @@ function makeEngine(sr) {
     e += thump * thumpAmp + env * noise() * buzzAmp; // plus the coil's current ripple (buzz)
     s.t += dt;
     headX = headAt(s);
-    if (s.t > s.T + 6 * settle) sk = null;          // the settle tail has died away
+    if (s.t > Math.max(s.T + 6 * settle, s.hold)) sk = null;   // the tail has died away (and any grain)
     return e;
   }
 
@@ -348,6 +386,7 @@ function makeEngine(sr) {
     else if (m.type === 'ready') { powered = true; rpm = d.spindle.rpm; accel = 0; state = 'ready'; } // jump to full speed (renders, tests)
     else if (m.type === 'busy') { busy = !!m.on; if (m.cls) busyCls = m.cls; if (!busy) seqLeft = 0; }
     else if (m.type === 'seek') pending = m.x;      // seek to x (0..1) once the head is free
+    else if (m.type === 'grains') { gBuf = m.data || null; setGrains(); }   // the drive's grains file, as samples
   }
 
   let peak = 0, sq = 0, n = 0;
@@ -380,7 +419,9 @@ function makeEngine(sr) {
           arm += m2.bp * m2.k * mGain[i];
         }
         arm *= seekAmp;
-      }
+      } else if (act) seekSample();                 // no modes: the head still moves
+      // An equal-power crossfade, so a half-and-half mix isn't quieter than either.
+      if (grainMix > 0) arm = arm * gSynthGain + grainSample() * gGrainGain;
       let y = (tones * wob + air + arm) * (d.master == null ? 1 : d.master);
       y = clamp(y, -1, 1);
       out[j] = y;

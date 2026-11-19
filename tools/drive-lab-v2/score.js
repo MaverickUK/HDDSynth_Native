@@ -58,14 +58,16 @@ function scorePack(dir, out, opts) {
   const pack = renderPack(drive, sr);
   const sdPath = path.join(dir, 'spindown.wav');
   if (fs.existsSync(sdPath)) r.spindown = spindownError(readWav(sdPath).x, pack.spindown, sr);
-  // The seeks, as heard: access.wav over the idle loop against the synthesis while busy,
-  // each measured against its own idle.
+  // The seeks, as heard: access.wav over the idle loop against the synthesis while busy.
+  // Both are detected against the recording's idle (what stands out over that is a
+  // seek), and each one's added spectrum is measured over its own idle.
   const acPath = path.join(dir, 'access.wav');
   let realAccess = null, synthAccess = null;
   if (fs.existsSync(acPath) && drive.actuator) {
     realAccess = overIdle(readWav(acPath).x, real.x);
     synthAccess = renderAccess(drive, sr, realAccess.length / sr);
-    const a = measure(realAccess, sr, reference(real.x, sr)), b = measure(synthAccess, sr, reference(synth, sr));
+    const refReal = reference(real.x, sr);
+    const a = measure(realAccess, sr, refReal), b = measure(synthAccess, sr, { ...reference(synth, sr), thr: refReal.thr });
     r.seeks = { rate: [a.rate, b.rate], busy: [a.busy, b.busy], err: excessError(a, b, sr), level: b.level - a.level };
   }
   if (out) {

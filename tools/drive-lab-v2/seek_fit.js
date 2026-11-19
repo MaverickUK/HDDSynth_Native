@@ -211,4 +211,4 @@ function excessError(a, b, sr) {
   return e / ra.length;
 }
 
-module.exports = { fitSeeks, measure, reference, overIdle, excessError, findModes };
+module.exports = { fitSeeks, measure, reference, detect, overIdle, excessError, findModes, HOP_S };

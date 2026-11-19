@@ -1,6 +1,8 @@
-// Renders a drive as a recorded pack would be: spinup.wav, idle.wav, spindown.wav.
+// Renders a drive as a recorded pack would be: spinup.wav, idle.wav, access.wav, spindown.wav.
 //
 //   node render.js drive.json OUT_DIR [sample_rate]
+//
+// A drive with recorded seeks (grains) has its grains file beside drive.json.
 const path = require('path'), fs = require('fs');
 const { makeEngine } = require('./engine.js');
 
@@ -12,10 +14,24 @@ function run(e, secs, sr) {
   return out;
 }
 
+// The drive's grains as samples, from the file its JSON names (relative to dir).
+function loadGrains(drive, dir) {
+  if (!drive.grains || !drive.grains.file) return null;
+  const { readWav } = require('./wav.js');
+  return Float32Array.from(readWav(path.join(dir, drive.grains.file)).x);
+}
+
+function engineFor(drive, sr, grains) {
+  const e = makeEngine(sr);
+  e.setParams(drive);
+  if (grains) e.handle({ type: 'grains', data: grains });
+  return e;
+}
+
 // Idle only, starting at full speed.
 function renderIdle(drive, sr, secs) {
-  const e = makeEngine(sr);
-  e.setParams(drive); e.handle({ type: 'ready' });
+  const e = engineFor(drive, sr);
+  e.handle({ type: 'ready' });
   run(e, 0.2, sr);                                   // let the level ramps settle
   return run(e, secs, sr);
 }
@@ -24,17 +40,16 @@ function renderIdle(drive, sr, secs) {
 // fitter can add the seeks to a recorded idle instead.
 function renderAccess(drive, sr, secs, opts) {
   opts = opts || {};
-  const dr = opts.seeksOnly ? { ...drive, tones: [], noise: { db: [] } } : drive;
-  const e = makeEngine(sr);
-  e.setParams(dr); e.handle({ type: 'ready' });
+  const dr = opts.seeksOnly ? { ...drive, tones: [], bed: null, noise: { db: [] } } : drive;
+  const e = engineFor(dr, sr, opts.grains);
+  e.handle({ type: 'ready' });
   run(e, 0.2, sr);
   e.handle({ type: 'busy', on: true, cls: opts.cls || 'random' });
   return run(e, secs, sr);
 }
 
-function renderPack(drive, sr) {
-  const e = makeEngine(sr);
-  e.setParams(drive);
+function renderPack(drive, sr, grains) {
+  const e = engineFor(drive, sr, grains);
   e.handle({ type: 'power', on: true });
   const spinup = run(e, drive.spindle.spinupS + 1.5, sr);
   const idle = run(e, 4, sr);
@@ -53,9 +68,9 @@ if (require.main === module) {
   const { writeWav } = require('./wav.js');
   const sr = Number(rate) || 16000, drive = JSON.parse(fs.readFileSync(file, 'utf8'));
   fs.mkdirSync(out, { recursive: true });
-  const p = renderPack(drive, sr);
+  const p = renderPack(drive, sr, loadGrains(drive, path.dirname(file)));
   for (const k of Object.keys(p)) writeWav(path.join(out, k + '.wav'), p[k], sr);
   console.log('rendered', file, '->', out, '@', sr, 'Hz');
 }
 
-module.exports = { renderIdle, renderAccess, renderPack };
+module.exports = { renderIdle, renderAccess, renderPack, loadGrains };

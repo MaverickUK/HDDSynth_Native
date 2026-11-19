@@ -87,7 +87,29 @@ Measured over all 9 packs (16 kHz) against v1's presets:
     the activity link reports). A `seek` message moves the head to a position,
     for HDDSynthPro's head targets.
 
-Recorded seek sounds (grains) will be an optional addition to this.
+### Recorded seeks (grains), optional
+
+`node grains.js PACK_DIR drive.json [--max N] [--mix M]` cuts up to N (24)
+seeks from the pack's access.wav into `<drive>.grains.wav`, beside the drive.
+It lists them in the drive's `grains`: `{ file, mix, items: [{ start, len, ms }] }`.
+
+While seeking, the engine plays a grain at the seek's rank among random seeks,
+so short seeks get short grains, as often as the recording had them. `mix`
+crossfades the synthesised seek (0) and the recording (1), at equal power. The
+head waits for the grain to finish.
+
+Without `grains`, or with mix 0, the drive is pure synthesis. Grains are about
+13-27 KB per drive at 16-bit.
+
+| pack | seek spectrum: synthesis | mix 0.5 | grains only |
+|---|---|---|---|
+| PB_WD_Raptor | 4.5 dB | 2.9 dB | 1.8 dB |
+| PB_QuantumFireballEX | 3.9 dB | 3.5 dB | 2.8 dB |
+| PB_MicroScience612 | 4.4 dB | 3.0 dB | 1.4 dB |
+
+(With grains only, the MicroScience's detected seek rate drops to 5/s against
+the recording's 12/s: its many local seeks all pick the shortest, quietest
+grains.)
 
 ## Tools (Node, no dependencies)
 
@@ -96,6 +118,7 @@ node fit.js PACK_DIR [--rpm N] [-o drive.json]   # fit a drive from a recorded p
 node render.js drive.json OUT_DIR [rate]          # render spinup/idle/access/spindown WAVs
 node score.js SAMPLES_DIR [OUT_DIR] [--pack NAME] # fit, render and score every pack;
                                                   # OUT_DIR gets A/B WAVs to listen to
+node grains.js PACK_DIR drive.json [--max N]      # optional: add recorded seeks to a drive
 ```
 
 `dsp.js` (FFT, spectra, peaks, bands) has no Node dependencies, so the Lab
@@ -185,5 +208,6 @@ Known gaps:
     "seeks" are really runs of them.
   - Strong flutter raises the idle's 99th percentile, so the scorer finds fewer
     of the synthesis's seeks (Fireball EX).
-  - There's no power-on calibration, no park on spindown and no recorded
-    grains yet.
+  - There's no power-on calibration and no park on spindown yet.
+  - Grains are cut at the recording's rate, so they don't yet play at other
+    rates.
