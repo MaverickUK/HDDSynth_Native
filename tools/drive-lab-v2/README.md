@@ -21,10 +21,21 @@ Measured over all 9 packs (16 kHz) against v1's presets:
   1.2-4.9 kHz).
 - **Spin-up and spindown sweep every tone together**, and each lights up as
   it passes the drive's fixed body resonances.
-- **Seeks are 10-30 ms bursts with a low "rock" (100-400 Hz)**, 10-20 a
-  second and often back to back, only 1-3 dB louder than the idle overall.
-  v1's were 10 dB louder, sparse and clicky.
-- **The stepper drive (MicroScience) makes a tone at its step rate.**
+- **Seeks are 4-40 ms bursts, mostly a low "rock"**: one resonance per drive,
+  steady from seek to seek (311 Hz on the Fireball EX, ~400 Hz on the Raptor).
+  Some drives ring higher instead: 1.3 and 2.4 kHz on the WD Caviar, 1.1-3 kHz on
+  Mark_Original. They come 9-40 a second, often back to back, and longer seeks
+  are louder. v1's were sparse and clicky.
+- **The stepper drive (MicroScience) hums at its step rate**, 240 Hz, whatever
+  the seek's length.
+- **Mark_IBM's access is sequential reading:** a 4 ms track-to-track step every
+  two revolutions (16.5 ms).
+- **Real tones flicker:** each one's level wanders by 1.5-3.5 dB over 50 ms
+  frames (8 on the Ultrastar). Steady synthesised tones are part of what
+  sounds artificial.
+- **The packs' access.wav is quiet between seeks** (10-20 dB under the idle):
+  the player mixes it over the idle loop, so that mix is what a seek is fitted
+  to and compared with.
 
 ## The spindle model (`engine.js`)
 
@@ -44,15 +55,45 @@ Measured over all 9 packs (16 kHz) against v1's presets:
   coast-down: it's constant friction's share of the braking at full speed,
   against windage. Near 0 the speed decays exponentially; at 1 it falls in a
   straight line. The default of 0.082 matches v1. The fitted drives range
-  from 0.15 to 1.
+  from 0.15 to 1. `flutterDb` makes each tone's level wander slowly and
+  independently (its standard deviation, in dB), at about `flutterHz`
+  (default 2). Faster flutter on a loud tone spills into the quiet bands
+  beside it.
+- **Bed** (optional, for designed drives): `count` faint tones around `db`, up
+  to `maxOrder`, `fractional` of them off the whole orders, placed by `seed`
+  (the same seed always gives the same bed). A real drive has dozens of faint
+  tones besides its main ones; fitted drives get theirs from the recording.
 
-Seeks, the actuator and the workloads come next.
+## The actuator and the workload
+
+- **Actuator:** `kind` is `voice` (voice coil) or `stepper`.
+  - A voice-coil seek of distance d (a fraction of the stroke) takes
+    `trackMs` + (`fullStrokeMs` - `trackMs`) * sqrt(d). The arm is pushed one
+    way for the first half and braked for the second.
+  - A stepper takes one step per 1/`stepHz`, `strokeSteps` for the full stroke.
+  - The excitation is a mix: `clickDb` (the force switching on, reversing, off;
+    for a stepper, each step), `thumpDb` (the force itself, softened) and
+    `buzzDb` (the coil's current ripple, as noise while the force is on).
+    `settleMs` is the tail after the head arrives. `levelExp` sets how much
+    harder longer seeks push.
+  - It's all filtered by `modes` (up to 8: `hz`, `q`, `db`), the arm and its
+    mount, and scaled by `db`.
+- **Workload** (while busy): after each seek, wait for the sector to come
+  round (0 to 1 revolution) and then for the transfer, `gapMs` on average.
+  - Random seeks go anywhere, except a share (`locality`) that stay close.
+  - `seqShare` is the share of the time spent in sequential runs, with 1 for
+    all of it. A sequential run steps one track every `seqRevs` revolutions.
+  - The engine's `busy` message takes a class: `random` or `sequential` (as
+    the activity link reports). A `seek` message moves the head to a position,
+    for HDDSynthPro's head targets.
+
+Recorded seek sounds (grains) will be an optional addition to this.
 
 ## Tools (Node, no dependencies)
 
 ```sh
 node fit.js PACK_DIR [--rpm N] [-o drive.json]   # fit a drive from a recorded pack
-node render.js drive.json OUT_DIR [rate]          # render spinup/idle/spindown WAVs
+node render.js drive.json OUT_DIR [rate]          # render spinup/idle/access/spindown WAVs
 node score.js SAMPLES_DIR [OUT_DIR] [--pack NAME] # fit, render and score every pack;
                                                   # OUT_DIR gets A/B WAVs to listen to
 ```
@@ -75,27 +116,50 @@ How fitting works:
    the speed tracks cleanly, the trusted part of the track is an extra term
    in the error. The idle levels stay fixed, so the body only reshapes the
    spindown.
+4. **Flutter** (`fit.js`): how much the strongest tones wander, less what the
+   measure finds in a steady render, then set by rendering and correcting.
+5. **Seeks** (`seek_fit.js`). `measure()` finds seeks in a recording against its
+   idle: bursts in three bands (120-800 Hz, 0.8-2.5 kHz, 2.5-7 kHz) above the
+   idle's 99th percentile by 6 dB. From them it takes:
+   - the rate, the durations and the gaps, and how busy the drive is
+   - what the seeks add to the spectrum
+   - how their level grows with length, and how spiky they are
+
+   Fitting works in two steps:
+   - **A starting point.** The arm's modes are the peaks of the added spectrum.
+     A step rate shows up as a low hum that stays within 6% from seek to seek.
+   - **Six rounds of correction.** Render the seeks, add them to the recorded
+     idle and measure that the same way. Then correct the mode levels, the seek
+     times, `gapMs` (from how busy it is), `levelExp` and `clickDb`. A very
+     regular rhythm becomes sequential reading.
 
 ## Where it stands
 
 `score.js` against the samples:
 
-| pack | rpm | idle level | idle bands | tones matched | spindown (flat body) | spindown (fitted) |
-|---|---|---|---|---|---|---|
-| Mark_IBM | 7267 | -1.2 dB | 1.7 dB | 100% | 10.0 dB | 5.9 dB |
-| Mark_Original | 7205 | -0.3 dB | 1.4 dB | 100% | 12.1 dB | 7.2 dB |
-| Mark_Toaster | 7208 | -1.1 dB | 2.0 dB | 93% | 5.4 dB | 5.4 dB |
-| PB_IBM_Ultrastar | 10003 | -1.3 dB | 3.1 dB | 94% | 10.5 dB | 5.2 dB |
-| PB_MicroScience612 | 3552 | -1.4 dB | 3.5 dB | 100% | 19.2 dB | 5.5 dB |
-| PB_QuantumFireballEX | 5359 | -0.9 dB | 2.0 dB | 95% | 12.5 dB | 6.0 dB |
-| PB_QuantumFireballTM | 4500 | -0.3 dB | 2.7 dB | 100% | 8.6 dB | 5.0 dB |
-| PB_WD_Caviar2850 | 4502 | -1.4 dB | 3.1 dB | 99% | 10.4 dB | 6.0 dB |
-| PB_WD_Raptor | 10004 | -0.3 dB | 1.3 dB | 99% | 6.9 dB | 4.8 dB |
+| pack | rpm | idle level | idle bands | tones matched | spindown (flat body) | spindown (fitted) | seeks/s real / synth | busy real / synth | seek level | seek spectrum |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Mark_IBM | 7267 | -1.2 dB | 1.9 dB | 100% | 10.0 dB | 5.7 dB | 64.5 / 55.6 | 33% / 36% | +0.8 dB | 7.4 dB |
+| Mark_Original | 7205 | -0.4 dB | 1.3 dB | 100% | 12.1 dB | 7.2 dB | 31.5 / 27.7 | 28% / 34% | 0.0 dB | 5.6 dB |
+| Mark_Toaster | 7208 | -1.2 dB | 2.0 dB | 93% | 5.4 dB | 5.4 dB | 12.7 / 11.5 | 46% / 42% | -0.8 dB | 3.6 dB |
+| PB_IBM_Ultrastar | 10003 | -1.8 dB | 3.4 dB | 76% | 10.5 dB | 5.3 dB | 8.6 / 5.8 | 70% / 74% | +0.5 dB | 4.7 dB |
+| PB_MicroScience612 | 3552 | -1.8 dB | 3.7 dB | 90% | 19.2 dB | 5.6 dB | 12.1 / 14.0 | 28% / 37% | +1.1 dB | 4.5 dB |
+| PB_QuantumFireballEX | 5359 | -1.0 dB | 2.3 dB | 82% | 12.5 dB | 6.1 dB | 38.6 / 24.0 | 23% / 15% | +1.6 dB | 3.9 dB |
+| PB_QuantumFireballTM | 4500 | -0.3 dB | 2.7 dB | 100% | 8.6 dB | 5.0 dB | 9.1 / 10.1 | 6% / 8% | +1.2 dB | 6.0 dB |
+| PB_WD_Caviar2850 | 4502 | -1.3 dB | 3.1 dB | 98% | 10.4 dB | 5.9 dB | 20.1 / 20.7 | 21% / 32% | +0.3 dB | 2.9 dB |
+| PB_WD_Raptor | 10004 | -0.4 dB | 1.2 dB | 97% | 6.9 dB | 4.8 dB | 13.5 / 15.0 | 14% / 16% | +0.2 dB | 4.5 dB |
 
-"Idle bands" is the mean difference across third-octave bands. The spindown
-columns are the same measure, frame by frame (0.25 s) over the recording,
-with both sides floored at the recording's background noise. "Flat body" is
-`score.js --no-spindown-fit`.
+The columns:
+- **Idle bands:** the mean difference across third-octave bands.
+- **Tones matched:** dips where the flutter is strong (Ultrastar, Fireball EX).
+  A 4 s window can't average out a tone wandering by 5 dB.
+- **Spindown:** the same measure as idle bands, frame by frame (0.25 s) over
+  the recording, with both sides floored at the recording's background noise.
+  "Flat body" is `score.js --no-spindown-fit`.
+- **Seek columns:** `measure()` run over each side's own idle. The real side is
+  access.wav over the idle loop; the synthesis is rendered while busy. The
+  spectrum column is the third-octave difference of what the seeks add, floored
+  30 dB below the recording's strongest band.
 
 Known gaps:
 - **Spindowns are about right in level and colour, but the falling tones
@@ -111,7 +175,15 @@ Known gaps:
   rotation tone (motor braking?). It isn't modelled.
 - Spin-up times are fitted for 4 packs. The rest keep the default of 5 s.
 - MicroScience's 289 Hz wobble isn't modelled.
-- **Designed drives sound artificial next to fitted ones:** 13 clean sines
-  against 40 measured tones, many faint and off-integer. To do: richness
-  controls (sidebands, faint tone beds, flutter).
-- No actuator yet.
+- **Designed drives sounded artificial next to fitted ones** (13 clean sines
+  against 40 measured tones). `designed_7200.json` now has a bed of 26 faint
+  tones and 2 dB of flutter. Still to judge by ear.
+- **Seeks:**
+  - The workload's gaps are a revolution plus an exponential wait. Real ones
+    come in bursts: many short gaps, then a long one.
+  - Back-to-back seeks are merged by the detector, so the Ultrastar's long
+    "seeks" are really runs of them.
+  - Strong flutter raises the idle's 99th percentile, so the scorer finds fewer
+    of the synthesis's seeks (Fireball EX).
+  - There's no power-on calibration, no park on spindown and no recorded
+    grains yet.

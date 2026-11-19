@@ -1,8 +1,9 @@
 {
  "version": 3,
  "name": "Designed 7200",
- "note": "Designed from scratch, not fitted: a late-90s 7200 rpm 3.5-inch drive. 12-slot, 8-pole motor; ball bearings; a body with three resonances.",
- "spindle": { "rpm": 7200, "spinupS": 7, "coastS": 9, "speedExp": 2, "motorBoostDb": 6, "jitter": 0.0005, "wobble": 0.15 },
+ "note": "Designed from scratch, not fitted: a late-90s 7200 rpm 3.5-inch drive. 12-slot, 8-pole motor; ball bearings; a body with three resonances; a voice-coil arm that rocks at 330 Hz.",
+ "spindle": { "rpm": 7200, "spinupS": 7, "coastS": 9, "speedExp": 2, "motorBoostDb": 6, "jitter": 0.0005, "wobble": 0.15, "flutterDb": 2 },
+ "bed": { "count": 26, "db": -58, "maxOrder": 90, "fractional": 0.35, "seed": 7200 },
  "tones": [
   { "order": 1, "db": -24 },
   { "order": 2, "db": -36 },
@@ -28,5 +29,16 @@
   "speedExp": 2.5,
   "follow": 0.5
  },
+ "actuator": {
+  "kind": "voice", "trackMs": 2, "fullStrokeMs": 18, "settleMs": 3, "levelExp": 0.5,
+  "thumpDb": 0, "buzzDb": -6, "clickDb": -8, "db": -4,
+  "modes": [
+   { "hz": 330, "q": 2.5, "db": 10 },
+   { "hz": 520, "q": 3, "db": 2 },
+   { "hz": 1500, "q": 5, "db": -4 },
+   { "hz": 2650, "q": 5, "db": -8 }
+  ]
+ },
+ "workload": { "gapMs": 25, "locality": 0.2, "seqShare": 0, "seqRevs": 2 },
  "master": 1.7
 }

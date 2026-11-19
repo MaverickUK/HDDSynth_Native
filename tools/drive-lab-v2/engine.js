@@ -13,6 +13,12 @@
 //   - air noise in half-octave bands, louder and brighter with speed.
 // Everything is a parameter of the drive, so a drive can be designed from scratch
 // or fitted from a recording (fit.js) and then edited.
+//
+// The actuator (seeks) is the same idea: an excitation through a few fixed
+// resonances (the arm and its mount: the low "rock" of a seek, 200-500 Hz on most
+// drives, and higher ringing modes). A voice-coil seek pushes the arm one way then
+// the other (bang-bang), taking longer the further it goes; a stepper moves in
+// steps at its step rate. While the drive is busy, a workload picks the seeks.
 
 function makeEngine(sr) {
   const TAU = Math.PI * 2, dt = 1 / sr;
@@ -51,6 +57,15 @@ function makeEngine(sr) {
   const MAX_CURVE = 40;
   const cLogHz = new Float64Array(MAX_CURVE), cDb = new Float64Array(MAX_CURVE);
   const nRms = new Float64Array(NB);   // each noise band's RMS at full speed
+  // Actuator: arm/mount modes and the excitation mix.
+  const MAX_MODES = 8;
+  let nModes = 0;
+  // Each mode is two band-pass stages in series: real seeks fall away steeply either
+  // side of their modes, and one stage's skirts (6 dB/octave) smear them everywhere.
+  const modes = [], modes2 = []; for (let i = 0; i < MAX_MODES; i++) { modes.push(svf()); modes2.push(svf()); }
+  const STAGE_Q = 0.644;   // two stages at Q * 0.644 have the -3 dB width of one at Q
+  const mGain = new Float64Array(MAX_MODES);
+  let act = null, thumpAmp = 0, buzzAmp = 0, clickAmp = 0, seekAmp = 0;
 
   // The body curve's gain at f (dB): straight lines between its points on a log-frequency axis.
   function curveDb(f) {
@@ -86,12 +101,14 @@ function makeEngine(sr) {
 
   function setParams(drive) {
     d = drive;
-    const tones = drive.tones || [];
+    const tones = (drive.tones || []).concat(bedTones(drive.bed, (drive.tones || []).length));
     nTones = Math.min(tones.length, MAX_TONES);
     for (let i = 0; i < nTones; i++) {
       tOrder[i] = tones[i].order; tAmp[i] = dbToAmp(tones[i].db); tMotor[i] = tones[i].motor ? 1 : 0;
       tPh[i] = rnd();                                 // random start phases: no click of aligned sines
     }
+    const sp = drive.spindle || {};
+    setFlutter(sp.flutterDb, sp.flutterHz);
     const b = drive.body || [];
     nBody = Math.min(b.length, MAX_BODY);
     for (let i = 0; i < nBody; i++) { bHz[i] = b[i].hz; bQ[i] = b[i].q; bGain[i] = dbToAmp(b[i].db); }
@@ -100,6 +117,151 @@ function makeEngine(sr) {
     for (let i = 0; i < nCurve; i++) { cLogHz[i] = Math.log(c[i].hz); cDb[i] = c[i].db; }
     const nb = (drive.noise && drive.noise.db) || [];
     for (let i = 0; i < NB; i++) nRms[i] = i < nb.length ? dbToAmp(nb[i]) : 0;
+
+    act = drive.actuator || null;
+    const am = (act && act.modes) || [];
+    nModes = Math.min(am.length, MAX_MODES);
+    for (let i = 0; i < nModes; i++) {
+      const q = Math.max(0.5, am[i].q) * STAGE_Q;
+      tuneSvf(modes[i], am[i].hz, q); tuneSvf(modes2[i], am[i].hz, q);
+      // Peak gain 1 at the mode (k * bp), scaled so a mode's db sets its level for a
+      // broadband excitation regardless of its Q: narrow modes would otherwise be quieter.
+      mGain[i] = dbToAmp(am[i].db) * Math.sqrt(am[i].q / 4);
+    }
+    if (act) {
+      seekAmp = dbToAmp(act.db == null ? 0 : act.db);
+      thumpAmp = act.thumpDb == null ? 0 : dbToAmp(act.thumpDb);
+      buzzAmp = act.buzzDb == null ? 0 : dbToAmp(act.buzzDb);
+      clickAmp = act.clickDb == null ? 0 : dbToAmp(act.clickDb);
+    }
+  }
+
+  // A bed of faint tones, for a designed drive: a real one has dozens besides its
+  // main ones, many off the whole orders (bearings, the motor's drive). bed:
+  // { count, db (their average level), maxOrder, fractional (share off whole
+  // orders), seed }. The same seed always gives the same bed.
+  function bedTones(bed, have) {
+    if (!bed || !bed.count) return [];
+    let s = (bed.seed || 1) * 2654435761 >>> 0 || 1;
+    const r = () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return (s >>> 0) / 4294967296; };
+    const out = [], maxO = bed.maxOrder || 60, n = Math.min(bed.count, MAX_TONES - have);
+    for (let i = 0; i < n; i++) {
+      // Spread evenly on a log scale of order, so low orders aren't crowded out.
+      let order = Math.exp(Math.log(maxO) * r());
+      order = r() < (bed.fractional == null ? 0.3 : bed.fractional) ? Math.round(order * 1000) / 1000 : Math.max(1, Math.round(order));
+      out.push({ order, db: (bed.db == null ? -60 : bed.db) + (r() - 0.5) * 12 });
+    }
+    return out;
+  }
+
+  // Flutter: each tone's level wanders slowly and independently, by
+  // spindle.flutterDb (its standard deviation). Real tones flicker by 1.5-3.5 dB
+  // over 50 ms (air currents, the tones beating with their reflections).
+  // Two one-pole low-passes in series: with one, the flutter's own fast changes spread
+  // each loud tone into a skirt hundreds of Hz wide that filled the quiet bands.
+  // spindle.flutterHz is how fast it wanders (default 2 Hz): faster flutter on a loud
+  // tone also fills the quiet bands beside it.
+  let flutterK = 0, flA = 0, flNorm = 1;
+  const tFl = new Float64Array(MAX_TONES), tFl2 = new Float64Array(MAX_TONES);
+  function setFlutter(db, hz) {
+    flutterK = (db || 0) / 20 * Math.LN10;          // flutter in dB as a natural-log gain
+    flA = Math.exp(-TAU * clamp(hz || 2, 0.1, 50) * ctrlDt);
+    // Unit white noise through two stages of (1 - a) / (1 - a z^-1) has variance
+    // (1 - a)^4 (1 + a^2) / (1 - a^2)^3: scale it back to 1.
+    flNorm = 1 / Math.sqrt(Math.pow(1 - flA, 4) * (1 + flA * flA) / Math.pow(1 - flA * flA, 3));
+  }
+
+  // ---- the actuator and the workload ----
+  // The head's position x runs 0 (outer edge) to 1 (inner). A voice-coil seek of
+  // distance d takes trackMs + (fullStrokeMs - trackMs) sqrt(d): the arm accelerates
+  // for half the time and brakes for the other half. A stepper takes one step per
+  // 1/stepHz, strokeSteps for the full stroke.
+  let headX = 0.1, sk = null;            // sk: the seek in progress
+  let busy = false, busyCls = 'random', gapLeft = 0, seqLeft = 0, pending = null;
+  let thump = 0;
+  const thumpK = 1 - Math.exp(-dt / 0.001);
+  const isStepper = () => act && act.kind === 'stepper';
+  const settleS = () => Math.max(0.0005, (act.settleMs == null ? 3 : act.settleMs) / 1000);
+  function seekTimeS(dist) {
+    if (isStepper()) {
+      const n = Math.max(1, Math.round(dist * (act.strokeSteps || 300)));
+      return n / (act.stepHz || 250);
+    }
+    const t0 = act.trackMs == null ? 3 : act.trackMs, t1 = act.fullStrokeMs == null ? 25 : act.fullStrokeMs;
+    return (t0 + (t1 - t0) * Math.sqrt(dist)) / 1000;
+  }
+  function startSeek(x) {
+    if (!act) return;
+    x = clamp(x, 0, 1);
+    const dist = Math.abs(x - headX);
+    const T = seekTimeS(dist), Tfull = seekTimeS(1);
+    // Longer seeks push harder: the excitation grows with the seek's length.
+    const A = Math.pow(T / Tfull, act.levelExp == null ? 0.5 : act.levelExp);
+    sk = { x0: headX, x1: x, T, A, t: 0, n: isStepper() ? Math.max(1, Math.round(dist * (act.strokeSteps || 300))) : 0, step: 0 };
+  }
+  // Where the head is during a seek: a stepper moves evenly; a voice coil follows the
+  // bang-bang curve (quadratic up to half way, then quadratic down).
+  function headAt(s) {
+    const u = clamp(s.t / s.T, 0, 1);
+    const p = isStepper() ? u : u < 0.5 ? 2 * u * u : 1 - 2 * (1 - u) * (1 - u);
+    return s.x0 + (s.x1 - s.x0) * p;
+  }
+  // The workload, at the control rate: while busy, after each seek wait for the
+  // sector to come round (0 to 1 revolution) and the transfer (gapMs on average),
+  // then seek again. Random seeks go anywhere; with locality some stay close.
+  // Sequential reading steps one track every seqRevs revolutions.
+  function workload() {
+    if (!act) return;
+    // The head is free once it has settled; the tail may still be ringing.
+    if (sk && sk.t < sk.T + settleS()) return;
+    if (pending != null) { startSeek(pending); pending = null; return; }
+    if (!busy) return;
+    if (gapLeft > 0) { gapLeft -= ctrlDt; return; }
+    const w = d.workload || {}, rev = rpm > 0 ? 60 / rpm : 0.01;
+    // seqShare: how much of a random workload is sequential runs (1: all of it).
+    const share = w.seqShare || 0;
+    const seq = busyCls === 'sequential' || share >= 1 || seqLeft > 0;
+    if (seq) {
+      startSeek(headX + (headX < 0.999 ? 0.0005 : -0.5));
+      // The next step comes seqRevs revolutions after this one starts.
+      gapLeft = Math.max(0, (w.seqRevs || 2) * rev - seekTimeS(0.0005) - settleS());
+      if (seqLeft > 0) seqLeft -= 1;
+      return;
+    }
+    if (share > 0 && rnd() < share * 0.1) seqLeft = 10 + Math.floor(rnd() * 30);
+    const loc = w.locality == null ? 0.2 : w.locality;
+    const x = rnd() < loc ? headX + (rnd() - 0.5) * 0.04 : rnd();
+    startSeek(x);
+    gapLeft = rnd() * rev - Math.log(1 - rnd() * 0.999) * (w.gapMs == null ? 4 : w.gapMs) / 1000;
+  }
+
+  // One sample of the actuator's excitation (then filtered by the modes).
+  function seekSample() {
+    if (!sk) return 0;
+    const s = sk, A = s.A;
+    const settle = settleS();
+    let e = 0, f = 0, env;
+    if (isStepper()) {
+      // One jolt per step, and the coil current while stepping.
+      const stepEvery = 1 / (act.stepHz || 250);
+      if (s.step < s.n && s.t >= s.step * stepEvery) { e += clickAmp; s.step++; }
+      f = s.t < s.T ? 1 : 0;
+      env = s.t < s.T ? 1 : Math.exp(-(s.t - s.T) / settle);
+    } else {
+      // The force's edges are the clicks: on at the start, reversed half way, off at the end.
+      const h = s.T / 2;
+      if (s.t === 0) e += clickAmp * A;
+      else if (s.t - dt < h && s.t >= h) e -= 2 * clickAmp * A;
+      else if (s.t - dt < s.T && s.t >= s.T) e += clickAmp * A;
+      f = s.t < h ? A : s.t < s.T ? -A : 0;
+      env = s.t < s.T ? A : A * Math.exp(-(s.t - s.T) / settle);
+    }
+    thump += (f - thump) * thumpK;                  // the force itself, softened over ~1 ms
+    e += thump * thumpAmp + env * noise() * buzzAmp; // plus the coil's current ripple (buzz)
+    s.t += dt;
+    headX = headAt(s);
+    if (s.t > s.T + 6 * settle) sk = null;          // the settle tail has died away
+    return e;
   }
 
   // The coast-down: ds/dt = -(s / tau + fric), s the fraction of full speed.
@@ -149,6 +311,12 @@ function makeEngine(sr) {
       if (f > 1 && f < nyq) {
         a = tAmp[i] * (tMotor[i] ? motor : mech) * body(f);
         if (f > fade0) a *= (nyq - f) / (nyq - fade0);
+        // (exp(-k^2) keeps the tone's average power where it was.)
+        if (flutterK) {
+          tFl[i] += (noise() - tFl[i]) * (1 - flA);
+          tFl2[i] += (tFl[i] - tFl2[i]) * (1 - flA);
+          a *= Math.exp(flutterK * tFl2[i] * flNorm - flutterK * flutterK);
+        }
       }
       tStep[i] = (a - tCur[i]) / ctrlEvery;
     }
@@ -165,6 +333,7 @@ function makeEngine(sr) {
       }
       nStep[i] = (g - nCur[i]) / ctrlEvery;
     }
+    if (state === 'ready') workload();
   }
 
   function power(on) {
@@ -177,6 +346,8 @@ function makeEngine(sr) {
     if (m.type === 'params') setParams(m.drive);
     else if (m.type === 'power') power(m.on);
     else if (m.type === 'ready') { powered = true; rpm = d.spindle.rpm; accel = 0; state = 'ready'; } // jump to full speed (renders, tests)
+    else if (m.type === 'busy') { busy = !!m.on; if (m.cls) busyCls = m.cls; if (!busy) seqLeft = 0; }
+    else if (m.type === 'seek') pending = m.x;      // seek to x (0..1) once the head is free
   }
 
   let peak = 0, sq = 0, n = 0;
@@ -200,7 +371,17 @@ function makeEngine(sr) {
         runSvf(b, noise());
         air += b.bp * b.k * nCur[i];               // k * bp: unit gain at the centre
       }
-      let y = (tones * wob + air) * (d.master == null ? 1 : d.master);
+      let arm = 0;
+      if (nModes) {
+        const e = seekSample();
+        for (let i = 0; i < nModes; i++) {
+          const m = modes[i], m2 = modes2[i];
+          runSvf(m, e); runSvf(m2, m.bp * m.k);
+          arm += m2.bp * m2.k * mGain[i];
+        }
+        arm *= seekAmp;
+      }
+      let y = (tones * wob + air + arm) * (d.master == null ? 1 : d.master);
       y = clamp(y, -1, 1);
       out[j] = y;
       const ay = y < 0 ? -y : y; if (ay > peak) peak = ay;
@@ -209,12 +390,12 @@ function makeEngine(sr) {
   }
 
   function telemetry() {
-    const t = { rpm, state, powered, fr: frNow, peak, rms: Math.sqrt(sq / Math.max(1, n)) };
+    const t = { rpm, state, powered, fr: frNow, peak, rms: Math.sqrt(sq / Math.max(1, n)), head: headX, seeking: !!sk, busy };
     peak = 0; sq = 0; n = 0;
     return t;
   }
 
-  return { setParams, handle, process, telemetry, body, NOISE_HZ: Array.from(noiseHz), NOISE_Q, MAX_TONES, MAX_BODY, MAX_CURVE };
+  return { setParams, handle, process, telemetry, body, NOISE_HZ: Array.from(noiseHz), NOISE_Q, MAX_TONES, MAX_BODY, MAX_CURVE, MAX_MODES };
 }
 
 if (typeof module !== 'undefined') module.exports = { makeEngine };

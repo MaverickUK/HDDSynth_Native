@@ -15,9 +15,10 @@
 const fs = require('fs'), path = require('path');
 const dsp = require('./dsp.js');
 const { fitPack, findTones } = require('./fit.js');
-const { renderPack, renderIdle } = require('./render.js');
+const { renderPack, renderIdle, renderAccess } = require('./render.js');
 const { readWav, writeWav } = require('./wav.js');
 const { bandEdges, bandFrames } = require('./spindown_fit.js');
+const { measure, reference, overIdle, excessError } = require('./seek_fit.js');
 
 function toneMatch(real, synth) {
   const top = real.slice().sort((a, b) => b.amp - a.amp).slice(0, 12);
@@ -57,6 +58,16 @@ function scorePack(dir, out, opts) {
   const pack = renderPack(drive, sr);
   const sdPath = path.join(dir, 'spindown.wav');
   if (fs.existsSync(sdPath)) r.spindown = spindownError(readWav(sdPath).x, pack.spindown, sr);
+  // The seeks, as heard: access.wav over the idle loop against the synthesis while busy,
+  // each measured against its own idle.
+  const acPath = path.join(dir, 'access.wav');
+  let realAccess = null, synthAccess = null;
+  if (fs.existsSync(acPath) && drive.actuator) {
+    realAccess = overIdle(readWav(acPath).x, real.x);
+    synthAccess = renderAccess(drive, sr, realAccess.length / sr);
+    const a = measure(realAccess, sr, reference(real.x, sr)), b = measure(synthAccess, sr, reference(synth, sr));
+    r.seeks = { rate: [a.rate, b.rate], busy: [a.busy, b.busy], err: excessError(a, b, sr), level: b.level - a.level };
+  }
   if (out) {
     fs.mkdirSync(out, { recursive: true });
     fs.writeFileSync(path.join(out, name + '.json'), JSON.stringify(drive, null, 1) + '\n');
@@ -68,6 +79,7 @@ function scorePack(dir, out, opts) {
       const p = path.join(dir, k + '.wav');
       if (fs.existsSync(p)) writeWav(path.join(out, `${name}_${k}_AB.wav`), cat(readWav(p).x, gap, pack[k]), sr);
     }
+    if (realAccess) writeWav(path.join(out, `${name}_access_AB.wav`), cat(head(realAccess, 5), gap, head(synthAccess, 5)), sr);
   }
   return r;
 }
@@ -80,10 +92,12 @@ if (require.main === module) {
   if (!root) { console.error('usage: node score.js SAMPLES_DIR [OUT_DIR] [--pack NAME] [--no-spindown-fit]'); process.exit(2); }
   const packs = fs.readdirSync(root).filter((d) => fs.existsSync(path.join(root, d, 'idle.wav')) && (!only || d === only)).sort();
   const fmt = (v, d) => (v == null ? '-' : v.toFixed(d));
-  console.log('pack                      rpm    tones  level dB  bands dB  tones matched  spinup s  coast s  spindown dB');
+  console.log('pack                      rpm    tones  level dB  bands dB  tones matched  spinup s  coast s  spindown dB  seeks/s real/synth  busy real/synth  seek level dB  seek spectrum dB');
   for (const p of packs) {
     const r = scorePack(path.join(root, p), out, { noSpindown });
-    console.log(`${r.name.padEnd(24)} ${r.rpm.toFixed(0).padStart(6)} ${String(r.tones).padStart(6)} ${fmt(r.level, 1).padStart(9)} ${fmt(r.bands, 2).padStart(9)} ${(Math.round(r.toneMatch * 100) + '%').padStart(14)} ${fmt(r.spinupS, 1).padStart(9)} ${fmt(r.coastS, 1).padStart(8)} ${fmt(r.spindown, 1).padStart(12)}`);
+    const s = r.seeks;
+    console.log(`${r.name.padEnd(24)} ${r.rpm.toFixed(0).padStart(6)} ${String(r.tones).padStart(6)} ${fmt(r.level, 1).padStart(9)} ${fmt(r.bands, 2).padStart(9)} ${(Math.round(r.toneMatch * 100) + '%').padStart(14)} ${fmt(r.spinupS, 1).padStart(9)} ${fmt(r.coastS, 1).padStart(8)} ${fmt(r.spindown, 1).padStart(12)}` +
+      (s ? `  ${(s.rate[0].toFixed(1) + ' / ' + s.rate[1].toFixed(1)).padStart(18)}  ${(Math.round(s.busy[0] * 100) + '% / ' + Math.round(s.busy[1] * 100) + '%').padStart(15)}  ${fmt(s.level, 1).padStart(13)}  ${fmt(s.err, 1).padStart(16)}` : '  no seeks'));
   }
 }
 

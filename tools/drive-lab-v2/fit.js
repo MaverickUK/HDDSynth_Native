@@ -6,12 +6,15 @@
 // From idle.wav:     the rotation rate, the tones (as orders of it) and the air-noise bands.
 // From spinup.wav and spindown.wav (if present): spin-up and coast-down times, by
 //                    tracking the rotation rate through them.
+// From access.wav:   the actuator (seek times, the arm's modes, the excitation) and
+//                    the workload (seek_fit.js).
 const fs = require('fs'), path = require('path');
 const dsp = require('./dsp.js');
 const { makeEngine } = require('./engine.js');
 const { renderIdle } = require('./render.js');
 const { readWav } = require('./wav.js');
 const { fitSpindown, applySpindown } = require('./spindown_fit.js');
+const { fitSeeks } = require('./seek_fit.js');
 
 const MAX_TONES = 40, PEAK_DB = 6, FLOOR_HZ = 75;
 const NOISE_HZ = makeEngine(16000).NOISE_HZ;
@@ -96,6 +99,20 @@ function calibrateNoise(drive, target, sr) {
     });
   }
   return probe.noise.db.map((v) => Math.round(v * 10) / 10);
+}
+
+// Flutter: how much the strongest tones' levels wander, frame to frame (50 ms): the
+// median over the 8 strongest of each one's standard deviation (dB).
+function toneFlutter(x, sr, tones, fr) {
+  const { S, df } = dsp.frames(x, sr, 2048, Math.round(sr * 0.05), 'hann');
+  const top = tones.slice().sort((a, b) => b.db - a.db).filter((t) => t.order * fr < sr * 0.44).slice(0, 8);
+  const sds = top.map((t) => {
+    const k = Math.round(t.order * fr / df);
+    const L = S.map((P) => { let m = 0; for (let j = k - 2; j <= k + 2; j++) m = Math.max(m, P[j] || 0); return db(m); });
+    const mu = L.reduce((s, v) => s + v, 0) / L.length;
+    return Math.sqrt(L.reduce((s, v) => s + (v - mu) * (v - mu), 0) / L.length);
+  }).sort((a, b) => a - b);
+  return sds.length ? sds[sds.length >> 1] : 0;
 }
 
 // The rotation rate through a spin-up or spindown: each short frame is scored
@@ -213,6 +230,21 @@ function fitPack(dir, opts) {
   const targets = noiseTargets(f, floorP, df, sr);
   drive.noise.db = calibrateNoise(drive, targets, sr);
   const fit = {};
+  // Flutter: what the recording's tones wander by, less what the measure itself finds
+  // in a steady render (the noise and neighbouring tones move it too).
+  // The measure's frames also smooth the flutter, so set it by rendering and correcting.
+  const realFl = toneFlutter(idle.x, sr, orders, fr), baseFl = toneFlutter(renderIdle(drive, sr, 6), sr, orders, fr);
+  const part = (v) => Math.sqrt(Math.max(0, v * v - baseFl * baseFl));
+  // Capped at 6 dB: beyond that it warbles (the Ultrastar measures 8, probably tones
+  // beating with each other).
+  const FLUTTER_MAX = 6;
+  let fl = part(realFl);
+  for (let round = 0; round < 4 && fl > 0.05; round++) {
+    drive.spindle.flutterDb = fl;
+    fl = Math.max(0, Math.min(FLUTTER_MAX, fl + 1.5 * (realFl - toneFlutter(renderIdle(drive, sr, 6), sr, orders, fr))));
+  }
+  drive.spindle.flutterDb = Math.round(fl * 10) / 10;
+  fit.flutter = { real: realFl, base: baseFl };
   const suPath = path.join(dir, 'spinup.wav');
   if (fs.existsSync(suPath)) {
     const w = readWav(suPath);
@@ -227,6 +259,12 @@ function fitPack(dir, opts) {
     const r = fitSpindown(w.x, sr, drive, targets, pts.length >= 6 ? pts : null);
     if (r) { applySpindown(drive, r); fit.spindown = r; fit.coastS = r.C; fit.tracked = pts.length >= 6; }
   }
+  // The seeks: the actuator and the workload, from access.wav.
+  const acPath = path.join(dir, 'access.wav');
+  if (fs.existsSync(acPath) && !opts.noSeeks) {
+    const r = fitSeeks(readWav(acPath).x, idle.x, sr, drive, { stepper: opts.stepper });
+    if (r) { drive.actuator = r.actuator; drive.workload = r.workload; fit.seeks = r; }
+  }
   return { drive, fit };
 }
 
@@ -238,9 +276,10 @@ if (require.main === module) {
   const { drive, fit } = fitPack(dir, { rpm: Number(opt('--rpm')) || 0 });
   const json = JSON.stringify(drive, null, 1);
   if (opt('-o')) fs.writeFileSync(opt('-o'), json + '\n'); else console.log(json);
-  const sd = fit.spindown;
+  const sd = fit.spindown, act = drive.actuator;
   console.error(`${drive.name}: ${drive.spindle.rpm} rpm, ${drive.tones.length} tones, spin-up ${fit.spinupS ? fit.spinupS.toFixed(1) + ' s' : 'not tracked'}` +
-    (sd ? `, coast ${sd.C.toFixed(1)} s (friction ${sd.k}${fit.tracked ? ', speed tracked' : ''}), spindown error ${sd.before.toFixed(1)} -> ${sd.after.toFixed(1)} dB` : ''));
+    (sd ? `, coast ${sd.C.toFixed(1)} s (friction ${sd.k}${fit.tracked ? ', speed tracked' : ''}), spindown error ${sd.before.toFixed(1)} -> ${sd.after.toFixed(1)} dB` : '') +
+    (act ? `, ${act.kind === 'stepper' ? `stepper at ${act.stepHz} Hz` : `seeks ${act.trackMs}-${act.fullStrokeMs} ms`}, ${act.modes.length} arm modes, ${fit.seeks.real.rate.toFixed(1)} seeks/s` : ', no seeks'));
 }
 
-module.exports = { fitPack, findTones, findRotation, trackSpeed };
+module.exports = { fitPack, findTones, findRotation, trackSpeed, toneFlutter };

@@ -20,15 +20,31 @@ function renderIdle(drive, sr, secs) {
   return run(e, secs, sr);
 }
 
+// Busy (seeking) at full speed. seeksOnly drops the spindle's tones and noise, so the
+// fitter can add the seeks to a recorded idle instead.
+function renderAccess(drive, sr, secs, opts) {
+  opts = opts || {};
+  const dr = opts.seeksOnly ? { ...drive, tones: [], noise: { db: [] } } : drive;
+  const e = makeEngine(sr);
+  e.setParams(dr); e.handle({ type: 'ready' });
+  run(e, 0.2, sr);
+  e.handle({ type: 'busy', on: true, cls: opts.cls || 'random' });
+  return run(e, secs, sr);
+}
+
 function renderPack(drive, sr) {
   const e = makeEngine(sr);
   e.setParams(drive);
   e.handle({ type: 'power', on: true });
   const spinup = run(e, drive.spindle.spinupS + 1.5, sr);
   const idle = run(e, 4, sr);
+  e.handle({ type: 'busy', on: true });
+  const access = run(e, 6, sr);
+  e.handle({ type: 'busy', on: false });
+  run(e, 0.1, sr);
   e.handle({ type: 'power', on: false });
   const spindown = run(e, drive.spindle.coastS + 0.5, sr);
-  return { spinup, idle, spindown };
+  return { spinup, idle, access, spindown };
 }
 
 if (require.main === module) {
@@ -42,4 +58,4 @@ if (require.main === module) {
   console.log('rendered', file, '->', out, '@', sr, 'Hz');
 }
 
-module.exports = { renderIdle, renderPack };
+module.exports = { renderIdle, renderAccess, renderPack };

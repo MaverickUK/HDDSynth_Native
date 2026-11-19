@@ -10,6 +10,7 @@
   "motorBoostDb": 0,
   "jitter": 0.0005,
   "wobble": 0,
+  "flutterDb": 0,
   "friction": 0.15
  },
  "tones": [
@@ -293,5 +294,40 @@
    "hz": 6451,
    "db": -15.304347826086957
   }
- ]
+ ],
+ "actuator": {
+  "kind": "voice",
+  "trackMs": 1.6,
+  "fullStrokeMs": 4.6,
+  "stepHz": 250,
+  "strokeSteps": 3,
+  "settleMs": 3,
+  "levelExp": 0.2019345267000766,
+  "thumpDb": 0,
+  "buzzDb": -6,
+  "clickDb": -14.396489694465863,
+  "db": 0,
+  "modes": [
+   {
+    "hz": 381,
+    "q": 2.5,
+    "db": 7.2
+   },
+   {
+    "hz": 1810,
+    "q": 4.9,
+    "db": 1.9
+   },
+   {
+    "hz": 3517,
+    "q": 4.9,
+    "db": -6.3
+   }
+  ]
+ },
+ "workload": {
+  "gapMs": 83,
+  "locality": 0.2,
+  "seqShare": 0
+ }
 }
