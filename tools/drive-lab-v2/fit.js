@@ -11,6 +11,7 @@ const dsp = require('./dsp.js');
 const { makeEngine } = require('./engine.js');
 const { renderIdle } = require('./render.js');
 const { readWav } = require('./wav.js');
+const { fitSpindown, applySpindown } = require('./spindown_fit.js');
 
 const MAX_TONES = 40, PEAK_DB = 6, FLOOR_HZ = 75;
 const NOISE_HZ = makeEngine(16000).NOISE_HZ;
@@ -147,25 +148,41 @@ function trackSpeed(x, sr, orders, fr0, dir) {
   return { t, fr: path.map((i) => grid[i]) };
 }
 
-// The engine's speed laws (fraction of full speed, t seconds after power on/off):
-//   spin-up  s(t) = 2.5 (1 - e^(-t / 2S)), until it reaches 1
-//   coast    s(t) = (1 + ct) e^(-t / tau) - ct, tau = C / 2.5, ct = 0.0894 (windage plus friction)
+// The engine's spin-up law (fraction of full speed, t seconds after power on):
+//   s(t) = 2.5 (1 - e^(-t / 2S)), until it reaches 1
+// (The coast law is in spindown_fit.js, which fits it along with the body.)
 const spinLaw = (t, S) => (t <= 0 ? 0 : Math.min(1, 2.5 * (1 - Math.exp(-t / (2 * S)))));
-const coastLaw = (t, C) => (t <= 0 ? 1 : Math.max(0, 1.0894 * Math.exp(-t / (C / 2.5)) - 0.0894));
 
-// Spin-up time S or coast time C: a least-squares fit of the law to the tracked
-// speed, also solving for when the power changed. Only the mid range is used: at
-// low speed the tones are faint and the track is unreliable.
-function fitTimes(spin, fr0, rising) {
-  const pts = [];
-  spin.fr.forEach((v, i) => { const s = v / fr0; if (s >= 0.4 && s <= 0.95) pts.push([spin.t[i], s]); });
+// The tracked speed where it's trustworthy, as [t, fraction of full speed]: the mid
+// range of a spin-up, the fast start of a spindown (as it slows the tones fade and
+// the track wanders).
+// A drive changing speed never holds one for long, so a track that goes flat for
+// FLAT_S has lost the tones (or locked onto a false comb): stop trusting it there.
+const FLAT_S = 0.4;
+function trustedPoints(spin, fr0, rising) {
+  const lo = rising ? 0.4 : 0.55, pts = [];
+  let runStart = 0;
+  for (let i = 0; i < spin.fr.length; i++) {
+    if (i > 0 && spin.fr[i] !== spin.fr[i - 1]) runStart = i;
+    const s = spin.fr[i] / fr0;
+    if (s > lo && s < 0.95 && spin.t[i] - spin.t[runStart] >= FLAT_S) {
+      while (pts.length && pts[pts.length - 1][0] >= spin.t[runStart]) pts.pop();   // drop the flat run itself
+      break;
+    }
+    if (s >= lo && s <= 0.95) pts.push([spin.t[i], s]);
+  }
+  return pts;
+}
+
+// Spin-up time: a least-squares fit of the law to the tracked speed, also solving
+// for when the power came on.
+function fitSpinup(pts) {
   if (pts.length < 6) return null;
-  const law = rising ? spinLaw : coastLaw;
   let best = Infinity, bestT = null;
   for (let T = 1; T <= 40; T += 0.1) {
     for (let t0 = -2; t0 <= 6; t0 += 0.05) {
       let e = 0;
-      for (const [t, s] of pts) { const d = law(t - t0, T) - s; e += d * d; }
+      for (const [t, s] of pts) { const d = spinLaw(t - t0, T) - s; e += d * d; }
       if (e < best) { best = e; bestT = T; }
     }
   }
@@ -193,15 +210,22 @@ function fitPack(dir, opts) {
     noise: { db: [], speedExp: 2.5, follow: 0.5 },
     master: 1,
   };
-  drive.noise.db = calibrateNoise(drive, noiseTargets(f, floorP, df, sr), sr);
+  const targets = noiseTargets(f, floorP, df, sr);
+  drive.noise.db = calibrateNoise(drive, targets, sr);
   const fit = {};
-  for (const [file, rising, key, lo, hi] of [['spinup.wav', true, 'spinupS', 1, 30], ['spindown.wav', false, 'coastS', 2, 40]]) {
-    const p = path.join(dir, file);
-    if (!fs.existsSync(p)) continue;
-    const w = readWav(p);
-    const v = fitTimes(trackSpeed(w.x, sr, orders, fr, rising ? 1 : -1), fr, rising);
-    fit[key] = v;
-    if (v) drive.spindle[key] = Math.round(Math.max(lo, Math.min(hi, v)) * 10) / 10;
+  const suPath = path.join(dir, 'spinup.wav');
+  if (fs.existsSync(suPath)) {
+    const w = readWav(suPath);
+    fit.spinupS = fitSpinup(trustedPoints(trackSpeed(w.x, sr, orders, fr, 1), fr, true));
+    if (fit.spinupS) drive.spindle.spinupS = Math.round(Math.min(30, fit.spinupS) * 10) / 10;
+  }
+  // The spindown: coast time and shape, level against speed, and the body curve.
+  const sdPath = path.join(dir, 'spindown.wav');
+  if (fs.existsSync(sdPath) && !opts.noSpindown) {
+    const w = readWav(sdPath);
+    const pts = trustedPoints(trackSpeed(w.x, sr, orders, fr, -1), fr, false);
+    const r = fitSpindown(w.x, sr, drive, targets, pts.length >= 6 ? pts : null);
+    if (r) { applySpindown(drive, r); fit.spindown = r; fit.coastS = r.C; fit.tracked = pts.length >= 6; }
   }
   return { drive, fit };
 }
@@ -214,7 +238,9 @@ if (require.main === module) {
   const { drive, fit } = fitPack(dir, { rpm: Number(opt('--rpm')) || 0 });
   const json = JSON.stringify(drive, null, 1);
   if (opt('-o')) fs.writeFileSync(opt('-o'), json + '\n'); else console.log(json);
-  console.error(`${drive.name}: ${drive.spindle.rpm} rpm, ${drive.tones.length} tones, spin-up ${fit.spinupS ? fit.spinupS.toFixed(1) + ' s' : 'not tracked'}, coast ${fit.coastS ? fit.coastS.toFixed(1) + ' s' : 'not tracked'}`);
+  const sd = fit.spindown;
+  console.error(`${drive.name}: ${drive.spindle.rpm} rpm, ${drive.tones.length} tones, spin-up ${fit.spinupS ? fit.spinupS.toFixed(1) + ' s' : 'not tracked'}` +
+    (sd ? `, coast ${sd.C.toFixed(1)} s (friction ${sd.k}${fit.tracked ? ', speed tracked' : ''}), spindown error ${sd.before.toFixed(1)} -> ${sd.after.toFixed(1)} dB` : ''));
 }
 
 module.exports = { fitPack, findTones, findRotation, trackSpeed };

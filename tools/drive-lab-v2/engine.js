@@ -46,17 +46,32 @@ function makeEngine(sr) {
   let d = null;
   let nTones = 0;
   const tOrder = new Float64Array(MAX_TONES), tAmp = new Float64Array(MAX_TONES), tMotor = new Uint8Array(MAX_TONES);
-  let nBody = 0;
+  let nBody = 0, nCurve = 0;
   const bHz = new Float64Array(MAX_BODY), bQ = new Float64Array(MAX_BODY), bGain = new Float64Array(MAX_BODY);
+  const MAX_CURVE = 40;
+  const cLogHz = new Float64Array(MAX_CURVE), cDb = new Float64Array(MAX_CURVE);
   const nRms = new Float64Array(NB);   // each noise band's RMS at full speed
 
-  // Body response at f: 1 plus a resonance curve per mode (linear amplitude).
+  // The body curve's gain at f (dB): straight lines between its points on a log-frequency axis.
+  function curveDb(f) {
+    if (nCurve === 0) return 0;
+    const lf = Math.log(f);
+    if (lf <= cLogHz[0]) return cDb[0];
+    for (let i = 1; i < nCurve; i++) {
+      if (lf <= cLogHz[i]) return cDb[i - 1] + (cDb[i] - cDb[i - 1]) * (lf - cLogHz[i - 1]) / (cLogHz[i] - cLogHz[i - 1]);
+    }
+    return cDb[nCurve - 1];
+  }
+
+  // Body response at f (linear amplitude): 1 plus a resonance curve per mode,
+  // times the body curve (fitted drives use the curve, designed ones the modes).
   function body(f) {
     let h = 1;
     for (let i = 0; i < nBody; i++) {
       const r = f / bHz[i] - bHz[i] / f;
       h += (bGain[i] - 1) / (1 + bQ[i] * bQ[i] * r * r);
     }
+    if (nCurve) h *= dbToAmp(curveDb(f));
     return h > 0 ? h : 0;
   }
 
@@ -80,8 +95,22 @@ function makeEngine(sr) {
     const b = drive.body || [];
     nBody = Math.min(b.length, MAX_BODY);
     for (let i = 0; i < nBody; i++) { bHz[i] = b[i].hz; bQ[i] = b[i].q; bGain[i] = dbToAmp(b[i].db); }
+    const c = drive.bodyCurve || [];                   // [{hz, db}], rising hz
+    nCurve = Math.min(c.length, MAX_CURVE);
+    for (let i = 0; i < nCurve; i++) { cLogHz[i] = Math.log(c[i].hz); cDb[i] = c[i].db; }
     const nb = (drive.noise && drive.noise.db) || [];
     for (let i = 0; i < NB; i++) nRms[i] = i < nb.length ? dbToAmp(nb[i]) : 0;
+  }
+
+  // The coast-down: ds/dt = -(s / tau + fric), s the fraction of full speed.
+  // spindle.friction (0..1) is friction's share of the deceleration at full speed:
+  // near 0 the drive slows like a decaying exponential (windage), at 1 in a straight
+  // line (constant friction). tau and fric are set so it stops at exactly coastS.
+  // (The same law is in fit.js and spindown_fit.js.)
+  function coastConsts(s) {
+    const k = clamp(s.friction == null ? 0.082 : s.friction, 0.01, 0.999);
+    const tau = s.coastS / Math.log(1 + (1 - k) / k);
+    return { tau, fric: k / ((1 - k) * tau) };
   }
 
   // Runs at CTRL_HZ: the spindle speed, then every tone's and band's target level.
@@ -100,8 +129,8 @@ function makeEngine(sr) {
       if (state === 'spinup' && rpm >= target * 0.999) state = 'ready';
     } else {
       // Windage (proportional to speed) plus bearing friction (constant): stops at exactly coastS.
-      const tau = s.coastS / 2.5;
-      rpm -= ctrlDt * (rpm / tau + 0.2236 * target / s.coastS);
+      const c = coastConsts(s);
+      rpm -= ctrlDt * target * (rpm / target / c.tau + c.fric);
       if (rpm <= 0) { rpm = 0; state = 'off'; }
       accel *= 0.97;
     }
@@ -185,7 +214,7 @@ function makeEngine(sr) {
     return t;
   }
 
-  return { setParams, handle, process, telemetry, NOISE_HZ: Array.from(noiseHz), MAX_TONES, MAX_BODY };
+  return { setParams, handle, process, telemetry, body, NOISE_HZ: Array.from(noiseHz), NOISE_Q, MAX_TONES, MAX_BODY, MAX_CURVE };
 }
 
 if (typeof module !== 'undefined') module.exports = { makeEngine };
