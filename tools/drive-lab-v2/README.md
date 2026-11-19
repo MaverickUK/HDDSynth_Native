@@ -48,8 +48,10 @@ Measured over all 9 packs (16 kHz) against v1's presets:
 
 - **Tones:** `order` (a multiple of the rotation rate; may be fractional) and
   `db` (its level at full speed). They scale with speed^`speedExp`.
-  A `motor` tone instead follows the drive current: `motorBoostDb` louder
-  while spinning up, and silent once the power is off.
+  A `motor` tone instead follows the drive current: it grows in step with the
+  speed, is `motorBoostDb` louder while accelerating, and is silent once the
+  power is off. (It used to be at full level from 10% speed, which made a loud
+  whirr. Recorded spin-ups start 5-25 dB under the idle.)
 - **Body:** up to 8 resonances (`hz`, `q`, `db`) that every tone and noise
   band passes through: the intuitive control for designing. Optionally also
   a `bodyCurve` (gain points `hz`, `db`, straight lines between them on a log

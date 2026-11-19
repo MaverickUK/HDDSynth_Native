@@ -399,7 +399,9 @@ function makeEngine(sr) {
     const sn = target > 0 ? rpm / target : 0;
     const mech = Math.pow(sn, s.speedExp == null ? 2 : s.speedExp);
     // Motor tones follow the drive current: louder while accelerating, gone once unpowered.
-    const motor = powered ? (1 + (dbToAmp(s.motorBoostDb || 0) - 1) * accel) * Math.min(1, sn * 10) : 0;
+    // They also grow with speed (as the recordings' spin-ups do: they start 10-25 dB
+    // under the idle). At full level from 10% speed, they were a loud whirr.
+    const motor = powered ? (1 + (dbToAmp(s.motorBoostDb || 0) - 1) * accel) * sn : 0;
     const nyq = sr * 0.45, fade0 = sr * 0.4;
     for (let i = 0; i < nTones; i++) {
       const f = tOrder[i] * frNow;

@@ -204,7 +204,7 @@ table.raw td { padding: 2px 4px; }
         <summary class="eyebrow" style="cursor:pointer">What you're hearing</summary>
         <canvas id="spec" aria-label="Live spectrum, log frequency; orange ticks mark the drive's tones"></canvas>
         <canvas id="gram" aria-label="Spectrogram"></canvas>
-        <p class="note">The spectrum of what's playing (blue), with the drive's tones where they are now (orange ticks): they slide as the speed changes. Below, the last few seconds.</p>
+        <p class="note">Top: the spectrum of what's playing now (blue), low notes on the left, high on the right, with the drive's tones marked where they are now (orange ticks): they slide as the speed changes. Below: the last few seconds, newest on the right, low notes at the bottom, louder in brighter colours. Spin-up draws rising lines; each seek is a short bright stripe.</p>
       </details>
     </div>
 
@@ -261,19 +261,20 @@ table.raw td { padding: 2px 4px; }
           <p id="resSummary"></p>
           <table class="cmp" id="cmp"></table>
           <div id="seekSrc" class="col" hidden>
-            <h3>Seek sounds</h3>
+            <h3>How should it make its seeks?</h3>
             <div class="seg" id="mixSeg" role="group" aria-label="Seek sounds">
               <button data-mix="0" aria-pressed="true">Synthesised</button>
-              <button data-mix="0.5" aria-pressed="false">Half and half</button>
+              <button data-mix="0.5" aria-pressed="false">Mixed</button>
               <button data-mix="1" aria-pressed="false">Recorded</button>
             </div>
-            <p class="note">The model's seeks are synthesised. Optionally, they can use real seeks cut from the pack's access.wav (<i>grains</i>: <span id="grainInfo"></span>). Then the drive needs that small WAV beside its drive.json. The spinning is always synthesised.</p>
+            <p class="note"><b>Synthesised:</b> the model makes every seek itself, like the rest of the drive, so no two are the same. <b>Recorded:</b> it plays real seeks instead, cut from the pack's access.wav (<span id="grainInfo"></span>), picking a short one for a short seek and a long one for a long seek. <b>Mixed:</b> some of each. The spinning is always synthesised.</p>
+            <p class="note">This changes the drive live (power it on and choose <i>Random reads</i>) and the Seeking row above. Recorded and Mixed need those snippets, so they come in a second, small file that goes beside drive.json. With Synthesised, drive.json is all the drive needs.</p>
           </div>
           <div class="row">
             <button class="btn primary" id="dlJson">Download drive.json</button>
-            <button class="btn" id="dlGrains" hidden>Download the grains WAV</button>
             <button class="btn" id="toDesign" title="Hear it with every raw parameter open to edit, under Advanced">Fine-tune it under Advanced</button>
           </div>
+          <p class="note" id="dlNote"></p>
         </div>
 
         <div class="card">
@@ -302,7 +303,7 @@ table.raw td { padding: 2px 4px; }
     </div>
     <div>
       <h2>Recorded seeks (optional)</h2>
-      <p>An imported drive can use real seek sounds (grains) instead of, or mixed with, the synthesised ones: a few dozen short slices of the recording, in a small WAV that goes beside drive.json. A drive without them is pure synthesis, and needs only drive.json.</p>
+      <p>An imported drive can play real seeks instead of, or mixed with, synthesised ones: a couple of dozen short snippets cut from the pack's recording (the code calls them <i>grains</i>), kept in a small WAV beside drive.json. A drive without them is pure synthesis, and needs only drive.json.</p>
     </div>
     <div>
       <h2>On the HDD Synth</h2>
@@ -688,10 +689,11 @@ onmessage = (ev) => {
       if (audio[k]) real[k] = f32(k === 'access' ? overIdle(audio.access.x, audio.idle.x) : audio[k].x);
       model[k] = f32(pack[k]);
     }
-    let modelGrains = null;
-    if (grains) modelGrains = f32(renderPack({ ...drive, grains: { ...drive.grains, mix: 1 } }, sr, grains).access);
-    for (const o of [grains, modelGrains, ...Object.values(model), ...Object.values(real)]) if (o) out.push(o.buffer);
-    postMessage({ type: 'done', drive, sr, grains, real, model, modelGrains }, out);
+    // The seeking with recorded seeks, mixed and only: the Listen table plays the one chosen.
+    const seekMix = { 0: model.access };
+    if (grains) for (const mix of [0.5, 1]) seekMix[mix] = f32(renderPack({ ...drive, grains: { ...drive.grains, mix } }, sr, grains).access);
+    for (const o of [grains, seekMix[0.5], seekMix[1], ...Object.values(model), ...Object.values(real)]) if (o) out.push(o.buffer);
+    postMessage({ type: 'done', drive, sr, grains, real, model, seekMix }, out);
   } catch (err) { postMessage({ type: 'error', message: err.message }); }
 };`;
   const ALL_STEPS = [...STEPS, ['grains', 'Cutting real seeks out of access.wav, in case you want them'], ['render', 'Rendering the model, to compare with the recordings']];
@@ -742,18 +744,19 @@ onmessage = (ev) => {
       (d.heads ? `, ${(d.heads.spinup || []).length} head events at power on and ${(d.heads.spindown || []).length} at power off` : '') +
       '. It\'s playing on the left now: power it on, and try the activity. Below, compare it with the recording.';
     const NAMES = { spinup: 'Spin-up', idle: 'Spinning', access: 'Seeking', spindown: 'Spindown' };
-    const rows = [el('tr', {}, el('th', { textContent: '' }), el('th', { textContent: 'Recording' }), el('th', { textContent: 'Model' }), el('th', { textContent: r.modelGrains ? 'Model, recorded seeks' : '' }))];
-    const btn = (label, x) => { const b = el('button', { className: 'btn', textContent: label }); b.dataset.label = label; b.addEventListener('click', () => playClip(x, r.sr, b)); return b; };
+    const rows = [el('tr', {}, el('th', { textContent: '' }), el('th', { textContent: 'The recording' }), el('th', { textContent: 'The model' }))];
+    // x: the samples, or a function giving them when played (the seeking follows the seek sounds chosen).
+    const btn = (label, x) => { const b = el('button', { className: 'btn', textContent: label }); b.dataset.label = label; b.addEventListener('click', () => playClip(typeof x === 'function' ? x() : x, r.sr, b)); return b; };
     for (const k of ['spinup', 'idle', 'access', 'spindown']) {
       if (!r.real[k]) continue;
-      rows.push(el('tr', {}, el('td', { textContent: NAMES[k] }), el('td', {}, btn('▶ Play', r.real[k])), el('td', {}, btn('▶ Play', r.model[k])),
-        el('td', {}, k === 'access' && r.modelGrains ? btn('▶ Play', r.modelGrains) : '')));
+      const model = k === 'access' ? () => r.seekMix[(importDrive.grains && importDrive.grains.mix) || 0] || r.model.access : r.model[k];
+      rows.push(el('tr', {}, el('td', { textContent: NAMES[k] }), el('td', {}, btn('▶ Play', r.real[k])), el('td', {}, btn('▶ Play', model))));
     }
     $('#cmp').replaceChildren(...rows);
     $('#seekSrc').hidden = !r.grains;
     if (r.grains) {
       const kb = Math.round(r.grains.length * 2 / 1024);
-      $('#grainInfo').textContent = `${d.grains.items.length} of them, ${kb} KB`;
+      $('#grainInfo').textContent = `${d.grains.items.length} short snippets, ${kb} KB`;
     }
     setMix(0);
     $('#resCard').hidden = false;
@@ -763,12 +766,13 @@ onmessage = (ev) => {
     if (!importDrive || !importDrive.grains) return;
     importDrive.grains.mix = v;
     document.querySelectorAll('#mixSeg button').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.mix) === v)));
-    $('#dlGrains').hidden = !(v > 0);
+    const name = safeName(importDrive.name);
+    $('#dlJson').textContent = v > 0 ? 'Download drive.json and its seek recordings' : 'Download drive.json';
+    $('#dlNote').textContent = v > 0 ? `Two files: ${name}.json (the model) and ${importDrive.grains.file} (the recorded seeks). Keep them together.` : `One file: ${name}.json, the whole model.`;
     if (drive === importDrive) { pushParams(); showName(); }
   }
   $('#mixSeg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setMix(Number(b.dataset.mix)); });
-  $('#dlJson').addEventListener('click', () => saveDrive(importDrive));
-  $('#dlGrains').addEventListener('click', () => { if (importGrains) download(new Blob([encodeWav(importGrains.data, importGrains.sr)], { type: 'audio/wav' }), importDrive.grains.file); });
+  $('#dlJson').addEventListener('click', () => saveDrive(importDrive, importGrains));
   $('#toDesign').addEventListener('click', () => { $('#adv').open = true; buildAdvanced(); $('#adv').scrollIntoView({ behavior: 'smooth' }); });
 
   Object.keys(FITTED).sort().forEach((k) => {
@@ -786,13 +790,15 @@ onmessage = (ev) => {
     const a = el('a', { href: URL.createObjectURL(blob), download: name });
     document.body.append(a); a.click(); a.remove();
   }
-  // A drive whose seeks are all synthesised needs no grains: leave them out.
-  function saveDrive(d) {
+  // A drive whose seeks are all synthesised needs no grains: leave them out. One that
+  // uses them gets its grains WAV too (when the page has the samples, as after an import).
+  function saveDrive(d, g) {
     const out = clone(d);
     if (out.grains && !(out.grains.mix > 0)) delete out.grains;
     download(new Blob([JSON.stringify(out, null, 1) + '\n'], { type: 'application/json' }), safeName(out.name) + '.json');
+    if (out.grains && g && g.data) setTimeout(() => download(new Blob([encodeWav(g.data, g.sr)], { type: 'audio/wav' }), out.grains.file), 300);
   }
-  $('#save').addEventListener('click', () => saveDrive(drive));
+  $('#save').addEventListener('click', () => saveDrive(drive, grains));
   $('#open').addEventListener('click', () => $('#openFile').click());
   $('#openFile').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
@@ -1066,17 +1072,36 @@ onmessage = (ev) => {
     for (let k = 1; k < fbuf.length; k++) { const f = k * hz; if (f < F0 || f > F1) continue; const x = xOf(f, w), y = yOf(fbuf[k]); if (!started) { g.moveTo(x, y); started = true; } else g.lineTo(x, y); }
     g.stroke();
   }
-  const hexRgb = (hex) => { const n = parseInt(hex.replace('#', ''), 16); return `${n >> 16 & 255},${n >> 8 & 255},${n & 255}`; };
+  const hexRgb = (hex) => { const n = parseInt(hex.replace('#', ''), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
+  // The spectrogram: time runs right to left, frequency up the side (log), colour from
+  // the background (quiet) through blue to orange (loud). The scale follows the loudest
+  // part playing, GRAM_DB below it is background, so the drive's detail shows at any level.
+  const GRAM_DB = 55;
+  let gramTop = -60;
   function drawGram() {
     const cv = $('#gram'), { g, w, h } = fitCanvas(cv);
     if (!anSynth || !fbuf) return;
     const hz = ctx.sampleRate / anSynth.fftSize, col = 2;
-    g.drawImage(cv, -col, 0); g.clearRect(w - col, 0, col, h);
-    const rgb = hexRgb(css('--accent'));
+    g.drawImage(cv, -col, 0);
+    const lv = new Float32Array(h);
+    let top = -200;
     for (let y = 0; y < h; y++) {
       const f = F0 * Math.pow(F1 / F0, 1 - y / h), k = Math.min(fbuf.length - 1, Math.round(f / hz));
-      g.fillStyle = `rgba(${rgb},${Math.max(0, Math.min(1, (fbuf[k] + 110) / 80)).toFixed(3)})`; g.fillRect(w - col, y, col, 1);
+      lv[y] = isFinite(fbuf[k]) ? fbuf[k] : -200;
+      if (lv[y] > top) top = lv[y];
     }
+    gramTop = Math.max(top, gramTop - 0.2, -100);            // rises at once, falls slowly
+    const c0 = hexRgb(css('--sunk')), c1 = hexRgb(css('--trace')), c2 = hexRgb(css('--accent'));
+    const img = g.createImageData(col, h);
+    for (let y = 0; y < h; y++) {
+      const t = Math.max(0, Math.min(1, (lv[y] - (gramTop - GRAM_DB)) / GRAM_DB)), u = t * t;
+      const [a, b, m] = u < 0.6 ? [c0, c1, u / 0.6] : [c1, c2, (u - 0.6) / 0.4];
+      for (let x = 0; x < col; x++) {
+        const o = (y * col + x) * 4;
+        img.data[o] = a[0] + (b[0] - a[0]) * m; img.data[o + 1] = a[1] + (b[1] - a[1]) * m; img.data[o + 2] = a[2] + (b[2] - a[2]) * m; img.data[o + 3] = 255;
+      }
+    }
+    g.putImageData(img, w - col, 0);
   }
   function stateName(t) {
     if (!t.powered) return t.rpm > 1 ? (t.script ? 'Parking' : 'Spinning down') : 'Off';

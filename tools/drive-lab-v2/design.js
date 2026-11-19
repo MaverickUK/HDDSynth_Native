@@ -122,7 +122,7 @@ function designToDrive(spec) {
   const coastS = r1(spinupS * (ball ? 1.3 : 1.7) * (1 + 0.1 * (s.platters - 2)));
   const spindle = {
     rpm: s.rpm, spinupS, coastS, friction: ball ? 0.15 : 0.06, speedExp: 2,
-    motorBoostDb: r1(4 + 6 * s.whine), jitter: 0.0005, wobble: r3(0.1 * s.imbalance),
+    motorBoostDb: r1(2 + 4 * s.whine), jitter: 0.0005, wobble: r3(0.1 * s.imbalance),
     flutterDb: s.mount === 'bare' ? 2.5 : s.mount === 'sled' ? 1.5 : 2, flutterHz: 2,
   };
 
