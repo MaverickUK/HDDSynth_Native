@@ -87,6 +87,42 @@ Measured over all 9 packs (16 kHz) against v1's presets:
     the activity link reports). A `seek` message moves the head to a position,
     for HDDSynthPro's head targets.
 
+### Head events
+
+What the heads do as the power changes, as two scripts played by the
+actuator: `heads.spinup` (from power on) and `heads.spindown` (from power off).
+Each event is `{ t, ms, db, x? }`:
+- `t` is when, in seconds after the power changed.
+- `ms` is how long the move takes.
+- `db` is its level against an ordinary seek of that length.
+- `x`, if given, is where it goes (0 is the outer edge, where a voice coil
+  parks). Without it, the head moves as far as a seek of `ms` would.
+
+While a script plays, the workload waits for it. There can be up to 128 events
+per script.
+
+The recordings have the same kinds of event, at times that vary from pack to pack:
+- **The motor starting (0-1.4 s):** one or two kicks of 30-180 ms. On the
+  Caviar, also a run of ticks that speed up with the motor.
+- **Loading the heads and calibrating, near full speed:** a run of seeks.
+  - The Caviar has one every 60 ms for 3 s.
+  - The Ultrastar has a sweep of short steps every 10 ms.
+  - The Fireball EX has a few long seeks, then a rhythm of 130 ms.
+- **The park at power off (0-0.1 s):** a strong move, sometimes followed by a
+  latch click.
+- **Sometimes a knock later in the spindown:** Mark_Original has a loud 90 ms
+  one at 1.9 s.
+
+`head_fit.js` finds the events and fits them:
+- **Finding them:** the background is each third-octave band's running median
+  over ±200 ms, since the speed changes all the way through. An event is a
+  burst 10 dB over that background. It must light at least four bands, or
+  three if it's short: tones sweeping through a band light only one or two.
+- **Fitting them:** each event becomes a move at its own time. Its time and
+  level are corrected over five rounds: render the events alone, add them to
+  the recording's background, and measure that the same way.
+- Designed drives get a hand-written script (see `designed_7200.json`).
+
 ### Recorded seeks (grains), optional
 
 `node grains.js PACK_DIR drive.json [--max N] [--mix M]` cuts up to N (24)
@@ -174,22 +210,24 @@ How fitting works:
      idle and measure that the same way. Then correct the mode levels, the seek
      times, `gapMs` (from how busy it is), `levelExp` and `clickDb`. A very
      regular rhythm becomes sequential reading.
+6. **Head events** (`head_fit.js`): from spinup.wav and spindown.wav, played by
+   the fitted actuator (see Head events above).
 
 ## Where it stands
 
 `score.js` against the samples:
 
-| pack | rpm | idle level | idle bands | tones matched | spindown (flat body) | spindown (fitted) | seeks/s real / synth | busy real / synth | seek level | seek spectrum |
-|---|---|---|---|---|---|---|---|---|---|---|
-| Mark_IBM | 7267 | -1.2 dB | 1.9 dB | 100% | 10.0 dB | 5.7 dB | 64.5 / 55.6 | 33% / 36% | +0.8 dB | 7.4 dB |
-| Mark_Original | 7205 | -0.4 dB | 1.3 dB | 100% | 12.1 dB | 7.2 dB | 31.5 / 27.7 | 28% / 34% | 0.0 dB | 5.6 dB |
-| Mark_Toaster | 7208 | -1.2 dB | 2.0 dB | 93% | 5.4 dB | 5.4 dB | 12.7 / 11.5 | 46% / 42% | -0.8 dB | 3.6 dB |
-| PB_IBM_Ultrastar | 10003 | -1.8 dB | 3.4 dB | 76% | 10.5 dB | 5.3 dB | 8.6 / 5.8 | 70% / 74% | +0.5 dB | 4.7 dB |
-| PB_MicroScience612 | 3552 | -1.8 dB | 3.7 dB | 90% | 19.2 dB | 5.6 dB | 12.1 / 14.0 | 28% / 37% | +1.1 dB | 4.5 dB |
-| PB_QuantumFireballEX | 5359 | -1.0 dB | 2.3 dB | 82% | 12.5 dB | 6.1 dB | 38.6 / 24.0 | 23% / 15% | +1.6 dB | 3.9 dB |
-| PB_QuantumFireballTM | 4500 | -0.3 dB | 2.7 dB | 100% | 8.6 dB | 5.0 dB | 9.1 / 10.1 | 6% / 8% | +1.2 dB | 6.0 dB |
-| PB_WD_Caviar2850 | 4502 | -1.3 dB | 3.1 dB | 98% | 10.4 dB | 5.9 dB | 20.1 / 20.7 | 21% / 32% | +0.3 dB | 2.9 dB |
-| PB_WD_Raptor | 10004 | -0.4 dB | 1.2 dB | 97% | 6.9 dB | 4.8 dB | 13.5 / 15.0 | 14% / 16% | +0.2 dB | 4.5 dB |
+| pack | rpm | idle level | idle bands | tones matched | spindown (flat body) | spindown (fitted) | seeks/s real / synth | busy real / synth | seek level | seek spectrum | head events spin-up | head events spindown | head event level |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Mark_IBM | 7267 | -1.2 dB | 1.9 dB | 100% | 10.0 dB | 5.8 dB | 64.5 / 55.6 | 33% / 34% | +0.7 dB | 7.4 dB | 5/5 | 5/5 | 6.4 dB |
+| Mark_Original | 7205 | -0.4 dB | 1.3 dB | 100% | 12.1 dB | 6.4 dB | 31.5 / 28.1 | 28% / 30% | 0.0 dB | 5.7 dB | 11/12 | 3/4 | 7.6 dB |
+| Mark_Toaster | 7208 | -1.2 dB | 2.0 dB | 93% | 5.4 dB | 5.6 dB | 12.7 / 11.2 | 46% / 41% | -0.7 dB | 3.5 dB | 4/7 | 9/14 | 7.7 dB |
+| PB_IBM_Ultrastar | 10003 | -1.8 dB | 3.4 dB | 76% | 10.5 dB | 5.4 dB | 8.6 / 5.6 | 70% / 76% | +0.6 dB | 4.7 dB | 30/38 | 4/4 | 5.8 dB |
+| PB_MicroScience612 | 3552 | -1.8 dB | 3.7 dB | 90% | 19.2 dB | 5.8 dB | 12.1 / 15.5 | 28% / 30% | +0.6 dB | 4.7 dB | 35/37 | 2/2 | 3.3 dB |
+| PB_QuantumFireballEX | 5359 | -1.0 dB | 2.3 dB | 82% | 12.5 dB | 5.9 dB | 38.6 / 38.0 | 23% / 29% | +1.1 dB | 3.9 dB | 17/20 | 5/7 | 4.9 dB |
+| PB_QuantumFireballTM | 4500 | -0.3 dB | 2.7 dB | 100% | 8.6 dB | 4.9 dB | 9.1 / 9.7 | 6% / 6% | +0.7 dB | 6.0 dB | 29/33 | 11/12 | 6.6 dB |
+| PB_WD_Caviar2850 | 4502 | -1.3 dB | 3.1 dB | 98% | 10.4 dB | 5.9 dB | 20.1 / 29.0 | 21% / 29% | -0.2 dB | 2.8 dB | 68/74 | 3/5 | 3.6 dB |
+| PB_WD_Raptor | 10004 | -0.4 dB | 1.2 dB | 97% | 6.9 dB | 5.0 dB | 13.5 / 15.2 | 14% / 17% | +0.1 dB | 4.5 dB | 17/18 | 5/8 | 6.7 dB |
 
 The columns:
 - **Idle bands:** the mean difference across third-octave bands.
@@ -202,6 +240,12 @@ The columns:
   access.wav over the idle loop; the synthesis is rendered while busy. The
   spectrum column is the third-octave difference of what the seeks add, floored
   30 dB below the recording's strongest band.
+- **Head events:** the recording's events matched by the render's within
+  20 ms, out of the recording's. Both are found with `head_fit.js`, each
+  against its own background. The level column is the mean difference of the
+  matched events. It's larger than inside the fit, which measures against the
+  recording's own background: a synthesised spindown's tones sweep through
+  different bands, which hides some events and adds others.
 
 Known gaps:
 - **Spindowns are about right in level and colour, but the falling tones
@@ -221,12 +265,14 @@ Known gaps:
   against 40 measured tones). `designed_7200.json` now has a bed of 26 faint
   tones and 2 dB of flutter. Still to judge by ear.
 - **Seeks:**
+  - Stepper seeks ignored their level (`levelExp` and, for head events, `db`)
+    until the head events found it. Refitted, the Caviar's seeks are now
+    detected too often (29/s against 20/s).
   - The workload's gaps are a revolution plus an exponential wait. Real ones
     come in bursts: many short gaps, then a long one.
   - Back-to-back seeks are merged by the detector, so the Ultrastar's long
     "seeks" are really runs of them.
   - Strong flutter raises the idle's 99th percentile, so the scorer finds fewer
     of the synthesis's seeks (Fireball EX).
-  - There's no power-on calibration and no park on spindown yet.
   - Grains are cut at the recording's rate, so they don't yet play at other
     rates.

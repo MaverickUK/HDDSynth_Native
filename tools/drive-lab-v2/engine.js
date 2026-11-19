@@ -132,6 +132,7 @@ function makeEngine(sr) {
       mGain[i] = dbToAmp(am[i].db) * Math.sqrt(am[i].q / 4);
     }
     setGrains();
+    setHeads(drive.heads);
     if (act) {
       seekAmp = dbToAmp(act.db == null ? 0 : act.db);
       thumpAmp = act.thumpDb == null ? 0 : dbToAmp(act.thumpDb);
@@ -194,14 +195,28 @@ function makeEngine(sr) {
     const t0 = act.trackMs == null ? 3 : act.trackMs, t1 = act.fullStrokeMs == null ? 25 : act.fullStrokeMs;
     return (t0 + (t1 - t0) * Math.sqrt(dist)) / 1000;
   }
-  function startSeek(x) {
+  // The distance a seek of T seconds covers (the time law turned round).
+  function distForS(T) {
+    if (isStepper()) return clamp(T * (act.stepHz || 250) / (act.strokeSteps || 300), 0, 1);
+    const t0 = act.trackMs == null ? 3 : act.trackMs, t1 = act.fullStrokeMs == null ? 25 : act.fullStrokeMs;
+    const u = clamp((T * 1000 - t0) / Math.max(0.1, t1 - t0), 0, 1);
+    return u * u;
+  }
+  // Seek to x. A head event (heads.spinup/spindown) instead gives the move's time
+  // (forceS) and a level (db): with x null it goes as far as that time takes it,
+  // inwards from the outer half and outwards from the inner.
+  function startSeek(x, forceS, db) {
     if (!act) return;
+    if (x == null) { const dd = distForS(forceS); x = headX < 0.5 ? headX + dd : headX - dd; }
     x = clamp(x, 0, 1);
     const dist = Math.abs(x - headX);
-    const T = seekTimeS(dist), Tfull = seekTimeS(1);
-    // Longer seeks push harder: the excitation grows with the seek's length.
-    const A = Math.pow(T / Tfull, act.levelExp == null ? 0.5 : act.levelExp);
-    sk = { x0: headX, x1: x, T, A, t: 0, n: isStepper() ? Math.max(1, Math.round(dist * (act.strokeSteps || 300))) : 0, step: 0, hold: 0 };
+    const stepper = isStepper(), stepHz = act.stepHz || 250;
+    const n = stepper ? Math.max(1, Math.round(forceS != null ? forceS * stepHz : dist * (act.strokeSteps || 300))) : 0;
+    const T = stepper ? n / stepHz : forceS != null ? Math.max(0.0002, forceS) : seekTimeS(dist), Tfull = seekTimeS(1);
+    // Longer seeks push harder: the excitation grows with the seek's length (a slow
+    // move longer than a full stroke doesn't push harder still).
+    const A = Math.pow(Math.min(1, T / Tfull), act.levelExp == null ? 0.5 : act.levelExp) * (db ? dbToAmp(db) : 1);
+    sk = { x0: headX, x1: x, T, A, t: 0, n, step: 0, hold: 0 };
     // How long a seek this is among random ones: two random points are further apart
     // than d with probability (1 - d)^2. The grains are in order of length, so this
     // picks short ones for short seeks, as often as the recording had them.
@@ -276,6 +291,43 @@ function makeEngine(sr) {
     gapLeft = rnd() * rev - Math.log(1 - rnd() * 0.999) * (w.gapMs == null ? 4 : w.gapMs) / 1000;
   }
 
+  // ---- head events ----
+  // What a drive does with its heads at power on and off, as two scripts of moves:
+  // heads.spinup (seconds after power on: the motor's start-up kicks, then loading the
+  // heads and calibrating) and heads.spindown (seconds after power off: the park, and
+  // any knocks as the heads land or latch). Each event is { t, ms, db, x? }: when, the
+  // move's time, its level against an ordinary seek of that time, and optionally where
+  // to (0 is the outer edge, where a voice coil parks). While a script plays, the
+  // workload waits for it.
+  const MAX_EVENTS = 128;
+  const hT = [new Float64Array(MAX_EVENTS), new Float64Array(MAX_EVENTS)];
+  const hMs = [new Float64Array(MAX_EVENTS), new Float64Array(MAX_EVENTS)];
+  const hDb = [new Float64Array(MAX_EVENTS), new Float64Array(MAX_EVENTS)];
+  const hX = [new Float64Array(MAX_EVENTS), new Float64Array(MAX_EVENTS)];   // NaN: no x given
+  const hN = [0, 0], hEnd = [0, 0];
+  let scr = -1, scrT = 0, scrI = 0;                // the script playing (0 spinup, 1 spindown), its clock and next event
+  function setHeads(h) {
+    ['spinup', 'spindown'].forEach((k, s) => {
+      const ev = ((h && h[k]) || []).slice().sort((p, q) => p.t - q.t);
+      hN[s] = Math.min(ev.length, MAX_EVENTS); hEnd[s] = 0;
+      for (let i = 0; i < hN[s]; i++) {
+        hT[s][i] = Math.max(0, ev[i].t); hMs[s][i] = Math.max(0.2, ev[i].ms == null ? 5 : ev[i].ms);
+        hDb[s][i] = ev[i].db || 0; hX[s][i] = ev[i].x == null ? NaN : ev[i].x;
+        hEnd[s] = Math.max(hEnd[s], hT[s][i] + hMs[s][i] / 1000);
+      }
+    });
+  }
+  function startScript(s) { scr = act && hN[s] ? s : -1; scrT = 0; scrI = 0; }
+  function runScript() {
+    if (scr < 0) return;
+    scrT += ctrlDt;
+    while (scrI < hN[scr] && scrT >= hT[scr][scrI]) {
+      const i = scrI++;
+      startSeek(isNaN(hX[scr][i]) ? null : hX[scr][i], hMs[scr][i] / 1000, hDb[scr][i]);
+    }
+    if (scrI >= hN[scr] && scrT >= hEnd[scr] + settleS()) scr = -1;
+  }
+
   // One sample of the actuator's excitation (then filtered by the modes).
   function seekSample() {
     if (!sk) return 0;
@@ -285,9 +337,9 @@ function makeEngine(sr) {
     if (isStepper()) {
       // One jolt per step, and the coil current while stepping.
       const stepEvery = 1 / (act.stepHz || 250);
-      if (s.step < s.n && s.t >= s.step * stepEvery) { e += clickAmp; s.step++; }
-      f = s.t < s.T ? 1 : 0;
-      env = s.t < s.T ? 1 : Math.exp(-(s.t - s.T) / settle);
+      if (s.step < s.n && s.t >= s.step * stepEvery) { e += clickAmp * A; s.step++; }
+      f = s.t < s.T ? A : 0;
+      env = s.t < s.T ? A : A * Math.exp(-(s.t - s.T) / settle);
     } else {
       // The force's edges are the clicks: on at the start, reversed half way, off at the end.
       const h = s.T / 2;
@@ -374,19 +426,21 @@ function makeEngine(sr) {
       }
       nStep[i] = (g - nCur[i]) / ctrlEvery;
     }
-    if (state === 'ready') workload();
+    runScript();
+    if (state === 'ready' && scr < 0) workload();
   }
 
   function power(on) {
     if (on === powered) return;
     powered = on;
     state = on ? 'spinup' : 'coast';
+    startScript(on ? 0 : 1);
   }
 
   function handle(m) {
     if (m.type === 'params') setParams(m.drive);
     else if (m.type === 'power') power(m.on);
-    else if (m.type === 'ready') { powered = true; rpm = d.spindle.rpm; accel = 0; state = 'ready'; } // jump to full speed (renders, tests)
+    else if (m.type === 'ready') { powered = true; rpm = d.spindle.rpm; accel = 0; state = 'ready'; scr = -1; } // jump to full speed (renders, tests)
     else if (m.type === 'busy') { busy = !!m.on; if (m.cls) busyCls = m.cls; if (!busy) seqLeft = 0; }
     else if (m.type === 'seek') pending = m.x;      // seek to x (0..1) once the head is free
     else if (m.type === 'grains') { gBuf = m.data || null; setGrains(); }   // the drive's grains file, as samples
@@ -434,12 +488,12 @@ function makeEngine(sr) {
   }
 
   function telemetry() {
-    const t = { rpm, state, powered, fr: frNow, peak, rms: Math.sqrt(sq / Math.max(1, n)), head: headX, seeking: !!sk, busy };
+    const t = { rpm, state, powered, fr: frNow, peak, rms: Math.sqrt(sq / Math.max(1, n)), head: headX, seeking: !!sk, busy, script: scr < 0 ? null : scr ? 'spindown' : 'spinup' };
     peak = 0; sq = 0; n = 0;
     return t;
   }
 
-  return { setParams, handle, process, telemetry, body, NOISE_HZ: Array.from(noiseHz), NOISE_Q, MAX_TONES, MAX_BODY, MAX_CURVE, MAX_MODES };
+  return { setParams, handle, process, telemetry, body, NOISE_HZ: Array.from(noiseHz), NOISE_Q, MAX_TONES, MAX_BODY, MAX_CURVE, MAX_MODES, MAX_EVENTS };
 }
 
 if (typeof module !== 'undefined') module.exports = { makeEngine };

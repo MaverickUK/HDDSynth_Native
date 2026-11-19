@@ -48,10 +48,26 @@ function renderAccess(drive, sr, secs, opts) {
   return run(e, secs, sr);
 }
 
+// The head events alone (heads.spinup from power on, or heads.spindown from power off),
+// without the spindle's tones and noise: the fitter adds them to the recording's background.
+function renderHeads(drive, sr, which, secs) {
+  const e = engineFor({ ...drive, tones: [], bed: null, noise: { db: [] } }, sr);
+  if (which === 'spindown') { e.handle({ type: 'ready' }); run(e, 0.1, sr); e.handle({ type: 'power', on: false }); }
+  else e.handle({ type: 'power', on: true });
+  return run(e, secs, sr);
+}
+
+// How long the spin-up recording lasts: to full speed and a little more, or past its
+// last head event.
+function spinupSecs(drive) {
+  const ev = (drive.heads && drive.heads.spinup) || [];
+  return Math.max(drive.spindle.spinupS + 1.5, ...ev.map((h) => h.t + 0.5));
+}
+
 function renderPack(drive, sr, grains) {
   const e = engineFor(drive, sr, grains);
   e.handle({ type: 'power', on: true });
-  const spinup = run(e, drive.spindle.spinupS + 1.5, sr);
+  const spinup = run(e, spinupSecs(drive), sr);
   const idle = run(e, 4, sr);
   e.handle({ type: 'busy', on: true });
   const access = run(e, 6, sr);
@@ -73,4 +89,4 @@ if (require.main === module) {
   console.log('rendered', file, '->', out, '@', sr, 'Hz');
 }
 
-module.exports = { renderIdle, renderAccess, renderPack, loadGrains };
+module.exports = { renderIdle, renderAccess, renderPack, renderHeads, loadGrains };

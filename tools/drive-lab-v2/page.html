@@ -342,8 +342,12 @@ registerProcessor('drive-processor', DriveProcessor);`;
             c.addEventListener('change', () => { if (c.checked) r[key] = true; else delete r[key]; pushParams(); });
             tr.append(el('td', {}, c));
           } else {
-            const n = el('input', { type: 'number', step, value: r[key], 'aria-label': key + ' ' + (i + 1) });
-            n.addEventListener('change', () => { const v = Number(n.value); if (isFinite(v)) { r[key] = v; pushParams(); if (after) after(); } });
+            const n = el('input', { type: 'number', step, value: r[key] == null ? '' : r[key], 'aria-label': key + ' ' + (i + 1) });
+            n.addEventListener('change', () => {
+              // An empty cell in an optional column (opt) leaves the key out.
+              if (n.value === '' && cols.find((c) => c[0] === key)[3] === 'opt') { delete r[key]; pushParams(); if (after) after(); return; }
+              const v = Number(n.value); if (isFinite(v)) { r[key] = v; pushParams(); if (after) after(); }
+            });
             tr.append(el('td', {}, n));
           }
         });
@@ -437,6 +441,18 @@ registerProcessor('drive-processor', DriveProcessor);`;
     drive.workload = drive.workload || clone(WORK_DEF);
     kids.push(card('Workload', 'While busy: after each seek, wait for the sector (up to a revolution) and the transfer. A sequential run steps one track every few revolutions.',
       fields(drive.workload, WORK, WORK_DEF)));
+
+    // Head events: two scripts of moves, at power on and at power off.
+    drive.heads = drive.heads || {};
+    const H = drive.heads;
+    H.spinup = H.spinup || []; H.spindown = H.spindown || [];
+    const HCOLS = [['t', 'Time (s)', 0.001], ['ms', 'Move (ms)', 0.1], ['db', 'dB', 0.5], ['x', 'To (0-1, blank: auto)', 0.01, 'opt']];
+    const lastT = (rows) => rows.reduce((m, h) => Math.max(m, h.t), 0);
+    kids.push(card('Head events', 'What the heads do as the power comes on and goes off, played by the actuator above: each event is a move at a time after the power changed, taking so long, at a level against an ordinary seek of that length. "To" sends it to a place (0 is the outer edge, where a voice coil parks); blank goes as far as the move\'s time takes it. While a script plays, the workload waits. Fitted drives get theirs from spinup.wav and spindown.wav: the motor\'s start-up kicks, loading the heads and calibrating, then the park. Power off and on to hear them.',
+      el('h3', { textContent: `At power on (${H.spinup.length} events)` }),
+      table(H.spinup, HCOLS, () => ({ t: Math.round((lastT(H.spinup) + 0.1) * 1000) / 1000, ms: 8, db: 0 })),
+      el('h3', { textContent: `At power off (${H.spindown.length} events)` }),
+      table(H.spindown, HCOLS, () => ({ t: Math.round((lastT(H.spindown) + 0.1) * 1000) / 1000, ms: 8, db: 0 }))));
 
     // Grains: optional recorded seeks.
     const gNote = el('p', { className: 'note' });
@@ -573,7 +589,7 @@ registerProcessor('drive-processor', DriveProcessor);`;
   function frame() {
     if (tel) {
       $('#rRpm').textContent = Math.round(tel.rpm);
-      $('#rState').textContent = tel.state;
+      $('#rState').textContent = tel.state + (tel.script ? ' · heads' : '');
       $('#rHead').textContent = Math.round(tel.head * 100) + '%';
       $('#rLevel').textContent = tel.peak > 0 ? (20 * Math.log10(tel.peak)).toFixed(1) : '-';
     }

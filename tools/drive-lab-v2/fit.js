@@ -15,6 +15,7 @@ const { renderIdle } = require('./render.js');
 const { readWav } = require('./wav.js');
 const { fitSpindown, applySpindown } = require('./spindown_fit.js');
 const { fitSeeks } = require('./seek_fit.js');
+const { fitScript } = require('./head_fit.js');
 
 const MAX_TONES = 40, PEAK_DB = 6, FLOOR_HZ = 75;
 const NOISE_HZ = makeEngine(16000).NOISE_HZ;
@@ -264,6 +265,18 @@ function fitPack(dir, opts) {
   if (fs.existsSync(acPath) && !opts.noSeeks) {
     const r = fitSeeks(readWav(acPath).x, idle.x, sr, drive, { stepper: opts.stepper });
     if (r) { drive.actuator = r.actuator; drive.workload = r.workload; fit.seeks = r; }
+  }
+  // The head events, played by that actuator: from spinup.wav (the motor's start-up
+  // kicks, loading the heads, calibrating) and spindown.wav (the park).
+  if (drive.actuator && !opts.noHeads) {
+    const heads = {};
+    for (const k of ['spinup', 'spindown']) {
+      const p = path.join(dir, k + '.wav');
+      if (!fs.existsSync(p)) continue;
+      const r = fitScript(readWav(p).x, sr, drive, k);
+      if (r && r.events.length) heads[k] = r.events;
+    }
+    if (Object.keys(heads).length) drive.heads = heads;
   }
   return { drive, fit };
 }
