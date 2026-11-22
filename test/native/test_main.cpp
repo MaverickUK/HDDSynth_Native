@@ -1690,13 +1690,21 @@ TEST(link_optical_sentences) {
     std::string l = sentenceLine("HDO,3,1,S,1,C");
     CHECK(parseOpticalSentence(l.data(), l.size(), o));
     CHECK(o.busy && o.cls == ActivityClass::Sequential && o.motor && !o.trayOpen);
-    for (const char* known : {"$HDO,3,0,I,0,C*56", "$HDO,3,1,S,1,C*4C", "$HDO,3,0,I,0,O*5A"}) {  // HDDSynthPro's
+    for (const char* known : {"$HDO,3,0,I,0,C*56", "$HDO,3,1,S,1,C*4C", "$HDO,3,0,I,0,O*5A"}) {  // HDDSynthPro's, cd.1-cd.2
         CHECK(parseOpticalSentence(known, strlen(known), o));
+        CHECK(o.disk);  // no disk field: a hard disk
     }
     CHECK(o.trayOpen && !o.motor);
+    for (const char* known : {"$HDO,3,0,I,0,C,1*4B", "$HDO,3,1,S,1,C,1*51", "$HDO,3,0,I,0,O,1*47"}) {  // since cd.3
+        CHECK(parseOpticalSentence(known, strlen(known), o));
+        CHECK(o.disk);
+    }
+    const char* alone = "$HDO,3,0,I,0,C,0*4A";  // a CD-ROM drive alone: the disk's pack silent
+    CHECK(parseOpticalSentence(alone, strlen(alone), o));
+    CHECK(!o.disk && !o.trayOpen);
     l = sentenceLine("HDO,4,0,I,0,O,later");  // a later version: extra fields ignored
     CHECK(parseOpticalSentence(l.data(), l.size(), o));
-    CHECK(!o.busy && o.cls == ActivityClass::Idle && !o.motor && o.trayOpen);
+    CHECK(!o.busy && o.cls == ActivityClass::Idle && !o.motor && o.trayOpen && o.disk);
     for (const char* bad : {"HDO,2,1,S,1,C", "HDO,3,2,S,1,C", "HDO,3,1,X,1,C", "HDO,3,1,S,1,X", "HDO,3,1,S,1",
                             "HDA,3,1,S,1,C"}) {
         l = sentenceLine(bad);

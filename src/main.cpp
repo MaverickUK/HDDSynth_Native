@@ -214,14 +214,20 @@ void samplePath(char* out, size_t len, const char* file) {
 // volume x (1 - balance), as in the CircuitPython firmware (they share its
 // voice 0), so the handovers between them never change level. Independent of
 // PLAY_IDLE. The jingle is the exception: always full volume.
-uint16_t baseLevel() { return levelFromFloat(settings.volume * (1.0f - settings.balance) * packInfo.gain); }
+// The disk's pack against the CD-ROM's: DISK_LEVEL, and silent while the Bay
+// says it has no hard disk (a CD-ROM drive alone: $HDO's disk field).
+float diskScale() {
+    if (hddlink::opticalPresent() && !hddlink::optical().disk) return 0.0f;
+    return settings.diskLevel * packInfo.gain;
+}
+uint16_t baseLevel() { return levelFromFloat(settings.volume * (1.0f - settings.balance) * diskScale()); }
 uint16_t idleLevel() { return settings.playIdle ? baseLevel() : 0; }
 uint16_t accessLevel(bool active) {
-    return active ? levelFromFloat(settings.volume * settings.balance * packInfo.gain) : 0;
+    return active ? levelFromFloat(settings.volume * settings.balance * diskScale()) : 0;
 }
 // A modelled drive plays at volume x gain; the engine applies the balance
 // itself (running sound against seeks).
-uint16_t driveLevel() { return levelFromFloat(settings.volume * packInfo.gain); }
+uint16_t driveLevel() { return levelFromFloat(settings.volume * diskScale()); }
 
 // Keep the engine's balance and PLAY_IDLE in step with the settings.
 void syncDriveBalance() {
@@ -1267,10 +1273,12 @@ void jumpAccess() {
 
 void cdPath(char* out, size_t len, const char* file) { snprintf(out, len, "/cdrom/%s/%s", cdPack, file); }
 
-uint16_t cdBaseLevel() { return levelFromFloat(settings.volume * (1.0f - settings.balance) * cdInfo.gain); }
+uint16_t cdBaseLevel() {
+    return levelFromFloat(settings.volume * (1.0f - settings.balance) * cdInfo.gain * settings.cdromLevel);
+}
 uint16_t cdIdleLevel() { return settings.playIdle ? cdBaseLevel() : 0; }
 uint16_t cdAccessLevel(bool active) {
-    return active ? levelFromFloat(settings.volume * settings.balance * cdInfo.gain) : 0;
+    return active ? levelFromFloat(settings.volume * settings.balance * cdInfo.gain * settings.cdromLevel) : 0;
 }
 
 void cdFreeRings() {

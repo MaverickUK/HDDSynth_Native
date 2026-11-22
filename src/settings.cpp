@@ -9,6 +9,7 @@
 namespace {
 
 float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+float clampLevel(float v) { return v < 0.0f ? 0.0f : (v > 2.0f ? 2.0f : v); }  // DISK_LEVEL, CDROM_LEVEL: up to 200%
 
 } // namespace
 
@@ -79,6 +80,8 @@ bool parseSettingsJson(const char* json, Settings& s) {
         s.oledSampleMs = static_cast<uint32_t>(ms < 50 ? 50 : ms);  // faster than 50 ms is just noise
     }
     if (doc["CDROM_ENABLED"].is<bool>()) s.cdrom = doc["CDROM_ENABLED"];
+    if (doc["DISK_LEVEL"].is<float>()) s.diskLevel = clampLevel(doc["DISK_LEVEL"]);
+    if (doc["CDROM_LEVEL"].is<float>()) s.cdromLevel = clampLevel(doc["CDROM_LEVEL"]);
     if (doc["CDROM_SAMPLE_PACK"].is<const char*>()) {
         strncpy(s.cdromPack, doc["CDROM_SAMPLE_PACK"].as<const char*>(), sizeof(s.cdromPack) - 1);
     }
@@ -90,9 +93,10 @@ bool parseSettingsJson(const char* json, Settings& s) {
 
 void printSettings(const Settings& s) {
     Console.printf("[settings] pack='%s' volume=%d%% balance=%d%% sim=%d spinup=%d spindown=%d idle=%d "
-                  "hold=%lums power_detect=%d random_pack=%d always_jingle=%d demo=%d save_levels=%d oled=%d standby_min=%lu hddsynthpro=%d\n",
+                  "hold=%lums power_detect=%d random_pack=%d always_jingle=%d demo=%d save_levels=%d oled=%d standby_min=%lu hddsynthpro=%d disk_level=%d%% cdrom_level=%d%%\n",
                   s.samplePack, static_cast<int>(s.volume * 100 + 0.5f), static_cast<int>(s.balance * 100 + 0.5f), s.simulationMode, s.playSpinup, s.playSpindown,
                   s.playIdle, static_cast<unsigned long>(s.accessHoldMs), s.powerDetection, s.randomSamplePack,
                   s.alwaysPlayJingle, s.demoMode, s.saveVolumeBalance, s.oledEnabled,
-                  static_cast<unsigned long>(s.standbyMinutes), s.hddSynthPro, s.cdrom, s.cdromPack);
+                  static_cast<unsigned long>(s.standbyMinutes), s.hddSynthPro,
+                  static_cast<int>(s.diskLevel * 100 + 0.5f), static_cast<int>(s.cdromLevel * 100 + 0.5f));
 }

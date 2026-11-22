@@ -268,6 +268,8 @@ default. For example:
 | `SEQUENTIAL_LED_COLOUR` | `"#FF1800"` (orange) | Activity LED colour during sequential transfers, with `EXPERIMENTAL_HDDSYNTHPRO_SUPPORT` on (a debugging aid). Same format as `ACTIVITY_LED_COLOUR`. *(New.)* |
 | `CDROM_SAMPLE_PACK` | `""` (the first in `/cdrom`) | The CD-ROM drive's pack, a folder in `/cdrom`, played beside the disk's when an HDDSynthPro has a CD-ROM drive, see [A CD-ROM drive too](#a-cd-rom-drive-too-experimental). Needs `EXPERIMENTAL_HDDSYNTHPRO_SUPPORT`. *(New, experimental.)* |
 | `CDROM_ENABLED` | `true` | `false` leaves the CD-ROM drive silent (and its 128 KB of buffers free) even with a pack in `/cdrom`. *(New.)* |
+| `DISK_LEVEL` | `1.0` | The disk's pack against the CD-ROM drive's, 0.0-2.0 (0-200%), over the pack's own `GAIN`. The volume still moves both. *(New, experimental.)* |
+| `CDROM_LEVEL` | `1.0` | The CD-ROM drive's pack against the disk's, likewise. With an IDE Synth Bay that has a CD-ROM drive alone (no hard disk), the disk's pack is silent whatever `DISK_LEVEL` says. *(New, experimental.)* |
 
 **Demo mode:** each pack spins up, plays idle/access with simulated HDD
 activity for 60 seconds, plays its spindown, and hands over to the next

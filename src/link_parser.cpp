@@ -59,8 +59,8 @@ bool parseOpticalSentence(const char* line, size_t len, OpticalState& out) {
     const char* body;
     size_t bodyLen;
     if (!sentenceBody(line, len, body, bodyLen)) return false;
-    Field f[6];
-    const size_t n = splitFields(body, bodyLen, f, 6);
+    Field f[7];
+    const size_t n = splitFields(body, bodyLen, f, 7);
     uint32_t ver;
     if (n < 6 || !f[0].is("HDO") || !f[1].toUint(ver) || ver < 3) return false;
     OpticalState o;
@@ -74,6 +74,7 @@ bool parseOpticalSentence(const char* line, size_t len, OpticalState& out) {
     else if (!f[4].is("0")) return false;
     if (f[5].is("O")) o.trayOpen = true;
     else if (!f[5].is("C")) return false;
+    if (n >= 7 && f[6].is("0")) o.disk = false;
     out = o;
     return true;
 }

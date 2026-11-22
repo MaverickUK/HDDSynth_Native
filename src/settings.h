@@ -33,6 +33,8 @@ struct Settings {
     uint8_t sequentialLedColour[3] = {255, 24, 0};  // SEQUENTIAL_LED_COLOUR (orange): during sequential transfers (link only)
     char cdromPack[64] = {0};        // CDROM_SAMPLE_PACK: the CD-ROM's pack in /cdrom ("" = the first there; link only)
     bool cdrom = true;               // CDROM_ENABLED: play the Bay's CD-ROM drive when it has one (link only)
+    float diskLevel = 1.0f;          // DISK_LEVEL: the disk's pack against the CD-ROM's (0-2, over its GAIN)
+    float cdromLevel = 1.0f;         // CDROM_LEVEL: the CD-ROM's pack likewise (link only)
 };
 
 // Parse JSON text into `s` (unknown keys ignored, bad values keep defaults).

@@ -56,13 +56,15 @@ struct OpticalState {
     ActivityClass cls = ActivityClass::Idle;
     bool motor = false;     // the disc spins
     bool trayOpen = false;
+    bool disk = true;       // a hard disk on the cable too; false: a CD-ROM drive alone (HDDSynthPro 0.36.0-cd.3)
     bool operator==(const OpticalState& o) const {
-        return busy == o.busy && cls == o.cls && motor == o.motor && trayOpen == o.trayOpen;
+        return busy == o.busy && cls == o.cls && motor == o.motor && trayOpen == o.trayOpen && disk == o.disk;
     }
     bool operator!=(const OpticalState& o) const { return !(*this == o); }
 };
 
-// Parse an $HDO line (version 3 or later; later fields ignored).
+// Parse an $HDO line (version 3 or later; later fields ignored). Its sixth
+// field, `disk`, came later: absent (or anything but 0), a hard disk.
 bool parseOpticalSentence(const char* line, size_t len, OpticalState& out);
 
 // Parse an $HDE line (version 2 or later; later fields ignored).
