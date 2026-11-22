@@ -55,6 +55,29 @@ bool parseHeadSentence(const char* line, size_t len, HeadTarget& out) {
     return true;
 }
 
+bool parseOpticalSentence(const char* line, size_t len, OpticalState& out) {
+    const char* body;
+    size_t bodyLen;
+    if (!sentenceBody(line, len, body, bodyLen)) return false;
+    Field f[6];
+    const size_t n = splitFields(body, bodyLen, f, 6);
+    uint32_t ver;
+    if (n < 6 || !f[0].is("HDO") || !f[1].toUint(ver) || ver < 3) return false;
+    OpticalState o;
+    if (f[2].is("1")) o.busy = true;
+    else if (!f[2].is("0")) return false;
+    if (f[3].is("I")) o.cls = ActivityClass::Idle;
+    else if (f[3].is("S")) o.cls = ActivityClass::Sequential;
+    else if (f[3].is("R")) o.cls = ActivityClass::Random;
+    else return false;
+    if (f[4].is("1")) o.motor = true;
+    else if (!f[4].is("0")) return false;
+    if (f[5].is("O")) o.trayOpen = true;
+    else if (!f[5].is("C")) return false;
+    out = o;
+    return true;
+}
+
 LinkParser::Got LinkParser::feed(char c) {
     switch (lines_.feed(c)) {
         case LineAssembler::Result::None:
@@ -76,6 +99,12 @@ LinkParser::Got LinkParser::feed(char c) {
         head_ = h;
         ++valid_;
         return Got::Head;
+    }
+    OpticalState o;
+    if (parseOpticalSentence(lines_.line(), lines_.length(), o)) {
+        optical_ = o;
+        ++valid_;
+        return Got::Optical;
     }
     ++rejected_;
     return Got::Nothing;

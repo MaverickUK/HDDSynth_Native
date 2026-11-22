@@ -17,6 +17,15 @@
 // total sectors); op R/W/-; sectors, the command's length. Sent at most
 // every 2 ms, always the latest command (HDDSynthPro's
 // docs/hddsynth-head-position-brief.md).
+//
+// Version 3 adds a CD-ROM drive on the same cable ($HDO, optical), sent only
+// while the Bay has one, on every change and every 200 ms:
+//
+//   $HDO,3,<busy>,<class>,<motor>,<tray>*<checksum>\r\n
+//
+// busy and class as $HDA's but for the CD-ROM's reads; motor 1 while its
+// disc spins (the Bay models when it spins up and down), tray O (open) or C
+// (closed). The synth plays a CD-ROM pack (CDROM_SAMPLE_PACK) from it.
 // Platform independent (unit tested natively).
 #pragma once
 
@@ -41,6 +50,21 @@ struct HeadTarget {
     uint32_t sectors = 0;
 };
 
+// The CD-ROM drive's state ($HDO).
+struct OpticalState {
+    bool busy = false;
+    ActivityClass cls = ActivityClass::Idle;
+    bool motor = false;     // the disc spins
+    bool trayOpen = false;
+    bool operator==(const OpticalState& o) const {
+        return busy == o.busy && cls == o.cls && motor == o.motor && trayOpen == o.trayOpen;
+    }
+    bool operator!=(const OpticalState& o) const { return !(*this == o); }
+};
+
+// Parse an $HDO line (version 3 or later; later fields ignored).
+bool parseOpticalSentence(const char* line, size_t len, OpticalState& out);
+
 // Parse an $HDE line (version 2 or later; later fields ignored).
 bool parseHeadSentence(const char* line, size_t len, HeadTarget& out);
 
@@ -54,12 +78,13 @@ class LinkParser {
 public:
     static constexpr size_t MAX_LINE = SENTENCE_MAX_LINE;  // longer lines are dropped (without the line ending)
 
-    enum class Got : uint8_t { Nothing, Activity, Head };
-    // Feed one byte. Activity or Head when it completes a valid $HDA (see
-    // state()) or $HDE (see head()).
+    enum class Got : uint8_t { Nothing, Activity, Head, Optical };
+    // Feed one byte. Activity, Head or Optical when it completes a valid $HDA
+    // (see state()), $HDE (see head()) or $HDO (see optical()).
     Got feed(char c);
     const LinkState& state() const { return state_; }
     const HeadTarget& head() const { return head_; }
+    const OpticalState& optical() const { return optical_; }
     uint32_t valid() const { return valid_; }
     uint32_t rejected() const { return rejected_; }  // complete lines that failed (noise without a '$' isn't counted)
 
@@ -67,6 +92,7 @@ private:
     LineAssembler lines_;
     LinkState state_;
     HeadTarget head_;
+    OpticalState optical_;
     uint32_t valid_ = 0;
     uint32_t rejected_ = 0;
 };

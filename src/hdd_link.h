@@ -14,6 +14,10 @@ bool enabled();     // begin() has been called
 bool present();     // a valid sentence within the last second
 LinkState state();  // the latest $HDA (meaningful while present())
 const HeadFeed& heads();  // the latest $HDE, and whether they're still arriving
+// The Bay's CD-ROM drive ($HDO): all off (no motor, tray closed) unless one
+// arrived within the last second, as the Bay sends them only while it has one.
+OpticalState optical();
+bool opticalPresent();
 // Send a sentence back to HDDSynthPro on J6 pin 4 (GP24, UART1 TX), the
 // link's other direction: `body` is everything between '$' and '*'.
 void send(const char* body);

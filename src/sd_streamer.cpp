@@ -22,7 +22,7 @@ uint32_t nextRemountMs = 0;
 Stats st;
 
 // Streams that are open, so recovery can reopen them. Small fixed table.
-constexpr int MAX_STREAMS = 6;
+constexpr int MAX_STREAMS = 10;  // the disk's five, and the CD-ROM's four
 Stream* registry[MAX_STREAMS] = {nullptr};
 FsFile files[MAX_STREAMS];
 
@@ -390,12 +390,12 @@ bool loadToRam(const char* path, int16_t*& data, uint32_t& samples) {
 // rescanning rather than storing a list: it only runs at boot, and RAM is
 // better spent keeping big spindowns in memory.
 // Returns the name that sorts straight after `after` ("" = the first), or false.
-bool nextPackName(const char* after, char* out, size_t outLen) {
+static bool nextDirName(const char* parent, const char* after, char* out, size_t outLen) {
     char prev[64];  // copy first: callers may pass the same buffer as after and out
     strncpy(prev, after, sizeof(prev) - 1);
     prev[sizeof(prev) - 1] = 0;
     FsFile dir, entry;
-    if (!dir.open("/samples")) return false;
+    if (!dir.open(parent)) return false;
     char name[64];
     out[0] = 0;
     while (entry.openNext(&dir, O_RDONLY)) {
@@ -411,6 +411,10 @@ bool nextPackName(const char* after, char* out, size_t outLen) {
     }
     return out[0] != 0;
 }
+
+bool nextPackName(const char* after, char* out, size_t outLen) { return nextDirName("/samples", after, out, outLen); }
+
+bool firstDir(const char* parent, char* out, size_t outLen) { return mounted && nextDirName(parent, "", out, outLen); }
 
 bool fileExists(const char* path) { return mounted && card.exists(path); }
 

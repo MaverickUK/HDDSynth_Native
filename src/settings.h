@@ -31,6 +31,8 @@ struct Settings {
     uint32_t standbyMinutes = 0;     // STANDBY_MINUTES: spin down after this long without activity (0 = never)
     bool hddSynthPro = false;        // EXPERIMENTAL_HDDSYNTHPRO_SUPPORT: activity link on J6, sequential.wav
     uint8_t sequentialLedColour[3] = {255, 24, 0};  // SEQUENTIAL_LED_COLOUR (orange): during sequential transfers (link only)
+    char cdromPack[64] = {0};        // CDROM_SAMPLE_PACK: the CD-ROM's pack in /cdrom ("" = the first there; link only)
+    bool cdrom = true;               // CDROM_ENABLED: play the Bay's CD-ROM drive when it has one (link only)
 };
 
 // Parse JSON text into `s` (unknown keys ignored, bad values keep defaults).

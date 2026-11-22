@@ -266,6 +266,8 @@ default. For example:
 | `OLED_SAMPLE_MS` | `1000` | Time covered by each column of the activity and supercap graphs (minimum 50). *(New.)* |
 | `EXPERIMENTAL_HDDSYNTHPRO_SUPPORT` | `false` | Listen for the activity link from an HDDSynthPro on J6 and play `sequential.wav` during sequential transfers, see [HDDSynthPro activity link](#hddsynthpro-activity-link-experimental). Turns the OLED off (same header). *(New, experimental.)* |
 | `SEQUENTIAL_LED_COLOUR` | `"#FF1800"` (orange) | Activity LED colour during sequential transfers, with `EXPERIMENTAL_HDDSYNTHPRO_SUPPORT` on (a debugging aid). Same format as `ACTIVITY_LED_COLOUR`. *(New.)* |
+| `CDROM_SAMPLE_PACK` | `""` (the first in `/cdrom`) | The CD-ROM drive's pack, a folder in `/cdrom`, played beside the disk's when an HDDSynthPro has a CD-ROM drive, see [A CD-ROM drive too](#a-cd-rom-drive-too-experimental). Needs `EXPERIMENTAL_HDDSYNTHPRO_SUPPORT`. *(New, experimental.)* |
+| `CDROM_ENABLED` | `true` | `false` leaves the CD-ROM drive silent (and its 128 KB of buffers free) even with a pack in `/cdrom`. *(New.)* |
 
 **Demo mode:** each pack spins up, plays idle/access with simulated HDD
 activity for 60 seconds, plays its spindown, and hands over to the next
@@ -336,6 +338,44 @@ loop). After a second without a valid line the link counts as lost and the
 activity input takes over again; the log says `[link] up` and `[link] lost`.
 The `s` stats include the link's state and counts of valid and rejected
 lines.
+
+### A CD-ROM drive too (experimental)
+
+HDDSynthPro can also emulate a CD-ROM drive on the same cable. With a CD-ROM
+pack on the card, the HDD Synth plays it beside the disk, from
+`$HDO,3,<busy>,<class>,<motor>,<tray>` (protocol version 3, 0.26.0-cd.1):
+whether the CD-ROM is reading (and how), whether its disc spins (HDDSynthPro
+models when a real drive would spin up and stop), and its tray.
+
+A CD-ROM pack is a disk's pack plus the tray, in its own folder in `/cdrom`
+(not `/samples`, so the pack button never picks it):
+
+```
+SD card
+├── samples/ ...
+└── cdrom/
+    └── CD_LG_GCC4320B/
+        ├── spinup.wav       the disc spinning up (after the tray closes, or on a read)
+        ├── idle.wav         spinning (loop)
+        ├── access.wav       seeking, while it reads at random (loop)
+        ├── sequential.wav   optional: reading straight through (loop)
+        ├── spindown.wav     stopping (and braking before the tray opens)
+        ├── tray_open.wav
+        ├── tray_close.wav
+        └── pack.json        optional: NAME, AUTHOR, GAIN
+```
+
+Every file must have the disk's pack's sample rate (one output rate for
+both; every pack so far is 16 kHz): with another pack playing at a
+different rate the CD-ROM stays silent and the log says why. Its sounds
+follow the volume and balance as the disk's do, scaled by its `GAIN`. They
+play one at a time on their own voice, in the order a drive makes them
+(braking, then the tray opening; the tray closing, then spinning up), and
+while the disc is at speed its loops run as the disk's: idle, with access or
+sequential at the access level while it reads. The disk's spin-down, standby
+or a pack change silences it; it picks up again from what HDDSynthPro says.
+`s` adds the CD-ROM's phase and voices, and the link's `cdrom=` count and
+state. HDDSynthPro's `tools/cd_sounds` records a real drive's pack.
 
 **Modelled drives (protocol version 2, v0.21.0):** with a `drive.json`
 pack, HDDSynthPro can also send each command's target,

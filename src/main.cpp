@@ -27,6 +27,7 @@
 #include "host_protocol.h"
 #include "io.h"
 #include "level_follower.h"
+#include "optical_player.h"
 #include "oled.h"
 #include "pack_info.h"
 #include "persist.h"
@@ -104,6 +105,24 @@ bool haveSequential = false;  // the loaded pack has a usable sequential.wav (el
 AccessChooser accessChooser;  // access.wav or sequential.wav, from the link's activity class
 bool ledSequential = false;   // the activity LED shows the sequential colour
 
+// The Bay's CD-ROM drive (see cdBegin()). Its rings, 128 KB, are allocated
+// at boot only when the card has a CD-ROM pack and the link is on.
+constexpr int CD_RINGS = 4;  // one-shots, idle, access, sequential
+SampleRing* cdRing[CD_RINGS] = {nullptr};
+char cdPack[64] = "";
+PackInfo cdInfo;               // its pack.json: NAME, AUTHOR, GAIN
+uint32_t cdRate = 0;           // its sample rate: it plays only while the disk's pack has the same
+bool cdReady = false;          // its streams are open
+bool cdHaveSequential = false;
+bool cdLoopsPrimed = false;
+bool cdRateWarned = false;
+sd::Stream cdStreamOneShot, cdStreamIdle, cdStreamAccess, cdStreamSequential;
+OpticalPlayer cdPlayer;
+AccessChooser cdChooser;
+bool cdLastBusy = false;
+uint32_t cdOffMs = 0;
+bool cdJumpPending = false;
+
 // A modelled pack (drive.json): the drive engine synthesises its sound on
 // core 1, in place of the WAVs, through VOICE_DRIVE.
 DriveEngine* driveEngine = nullptr;  // allocated only while a modelled pack is loaded
@@ -148,6 +167,8 @@ uint32_t lastLoopStartUs = 0;
 uint32_t maxLoopGapUs = 0;  // longest gap between loop() passes since power loss
 
 void enterRun();
+void cdBegin();
+void cdStop();
 void startSpinup();
 void pickDemoColour();
 bool startSpindownVoice();
@@ -292,6 +313,7 @@ void beepAndWait(beeps::Type t) {
 void halt(const char* why, beeps::Type error) {
     Console.printf("[fatal] %s\n", why);
     for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SEQUENTIAL, VOICE_SPINDOWN, VOICE_DRIVE}) audio::stop(id);
+    cdStop();
     beepAndWait(error);
     io::ampOff();
     haltBeep = error;
@@ -408,6 +430,12 @@ void printStats() {
         printVoice("access", VOICE_ACCESS);
         if (haveSequential) printVoice("sequential", VOICE_SEQUENTIAL);
         printVoice("spindown", VOICE_SPINDOWN);
+    }
+    if (cdReady) {
+        Console.printf(" | cdrom: %s", cdPhaseName(cdPlayer.phase()));
+        printVoice("cd_idle", VOICE_CD_IDLE);
+        printVoice("cd_access", VOICE_CD_ACCESS);
+        if (cdHaveSequential) printVoice("cd_sequential", VOICE_CD_SEQUENTIAL);
     }
     Console.printf("\n[stats] sd: chunks=%lu read_err=%lu recoveries=%lu failed_rec=%lu rescued=%lu max_read=%luus"
                   " | stress: %s transitions=%lu failures=%lu | supercap=%dmV flt=%d\n",
@@ -649,6 +677,7 @@ void handleSerial() {
             }
             case 'j':  // replay the jingle: clear its flag and reboot
                 for (VoiceId id : {VOICE_SPINUP, VOICE_IDLE, VOICE_ACCESS, VOICE_SEQUENTIAL, VOICE_SPINDOWN, VOICE_DRIVE}) audio::stop(id);
+                cdStop();
                 io::ampOff();  // audio stopped: safe to write flash
                 persist::state().jinglePlayed = false;
                 persist::commit();
@@ -841,6 +870,7 @@ void stopPackVoices(bool keepDrive = false) {
     stopStress();
     for (VoiceId id : {VOICE_IDLE, VOICE_ACCESS, VOICE_SEQUENTIAL, VOICE_SPINDOWN}) audio::stop(id);
     if (!keepDrive) audio::stop(VOICE_DRIVE);
+    cdStop();
     io::rgbOff();
     io::hddLed(false);
     lastAccess = false;
@@ -1036,6 +1066,7 @@ void boot() {
         hddlink::begin();
         ringSequential = new SampleRing;  // before the pack loads, so the spindown's RAM check counts it
     }
+    cdBegin();  // likewise
     power::begin(settings.powerDetection);
     powerlog::begin();
     persist::begin();
@@ -1193,6 +1224,7 @@ void enterSpindown() {
     audio::stop(VOICE_IDLE);
     audio::stop(VOICE_ACCESS);
     audio::stop(VOICE_SEQUENTIAL);
+    cdStop();  // a CD-ROM drive just goes quiet: the supercap's energy is for the disk's spindown
     if (!audio::isIdle(VOICE_SPINUP)) audio::stop(VOICE_SPINUP);
     sd::closeStream(streamSpinup);  // frees the one-shot ring for a streamed spindown
     io::rgbOff();
@@ -1225,7 +1257,194 @@ void jumpAccess() {
     if (haveSequential) jumpLoop(VOICE_SEQUENTIAL, streamSequential);
 }
 
+// ---- The CD-ROM drive beside the disk ---------------------------------------------
+// The Bay can have a CD-ROM drive on the same cable. It says what the drive
+// is doing in $HDO (spinning, reading, the tray), and a pack in /cdrom
+// (CDROM_SAMPLE_PACK, else the first there) plays it beside the disk's
+// pack: the same files as a disk's pack, plus tray_open.wav and
+// tray_close.wav. OpticalPlayer decides what plays; this plays it. It
+// follows the volume and balance as the disk does, scaled by its own GAIN.
+
+void cdPath(char* out, size_t len, const char* file) { snprintf(out, len, "/cdrom/%s/%s", cdPack, file); }
+
+uint16_t cdBaseLevel() { return levelFromFloat(settings.volume * (1.0f - settings.balance) * cdInfo.gain); }
+uint16_t cdIdleLevel() { return settings.playIdle ? cdBaseLevel() : 0; }
+uint16_t cdAccessLevel(bool active) {
+    return active ? levelFromFloat(settings.volume * settings.balance * cdInfo.gain) : 0;
+}
+
+void cdFreeRings() {
+    for (SampleRing*& r : cdRing) {
+        delete r;
+        r = nullptr;
+    }
+}
+
+// At boot, before the disk's pack loads (so the spindown's RAM check counts
+// the rings): find the pack, check its files share a rate, open its loops.
+void cdBegin() {
+    if (!settings.hddSynthPro || !settings.cdrom) return;
+    if (settings.cdromPack[0]) {
+        char dir[96];
+        snprintf(dir, sizeof(dir), "/cdrom/%s", settings.cdromPack);
+        if (!sd::fileExists(dir)) {
+            Console.printf("[cdrom] CDROM_SAMPLE_PACK '%s' isn't in /cdrom: no CD-ROM sounds\n", settings.cdromPack);
+            return;
+        }
+        strncpy(cdPack, settings.cdromPack, sizeof(cdPack) - 1);
+    } else if (!sd::firstDir("/cdrom", cdPack, sizeof(cdPack))) {
+        return;  // no CD-ROM packs on the card
+    }
+    char p[128];
+    cdPath(p, sizeof(p), "pack.json");
+    static char json[1024];
+    size_t len = 0;
+    if (sd::readTextFile(p, json, sizeof(json), len) && !parsePackJson(json, cdInfo)) {
+        Console.printf("[cdrom] %s: pack.json is not valid JSON, ignoring it\n", cdPack);
+    }
+    static const char* const files[] = {"idle.wav",     "access.wav",    "sequential.wav", "spinup.wav",
+                                        "spindown.wav", "tray_open.wav", "tray_close.wav"};
+    for (const char* name : files) {
+        cdPath(p, sizeof(p), name);
+        WavInfo w;
+        if (!sd::wavInfo(p, w)) continue;
+        if (!wavIsPlayable(w) || (cdRate && w.sampleRate != cdRate)) {
+            Console.printf("[cdrom] %s: %s is %lu Hz, %u channel(s), %u bit; all must be mono 16-bit at one rate\n",
+                           cdPack, name, static_cast<unsigned long>(w.sampleRate), w.channels, w.bitsPerSample);
+            return;
+        }
+        cdRate = w.sampleRate;
+    }
+    for (SampleRing*& r : cdRing) {
+        r = new (std::nothrow) SampleRing;
+        if (!r) {
+            Console.println("[cdrom] not enough RAM for its rings: no CD-ROM sounds");
+            cdFreeRings();
+            return;
+        }
+    }
+    cdPath(p, sizeof(p), "idle.wav");
+    const bool idleOk = sd::openStream(cdStreamIdle, p, VOICE_CD_IDLE, cdRing[1], true);
+    cdPath(p, sizeof(p), "access.wav");
+    const bool accessOk = sd::openStream(cdStreamAccess, p, VOICE_CD_ACCESS, cdRing[2], true);
+    if (!idleOk || !accessOk) {
+        Console.printf("[cdrom] %s is missing idle.wav/access.wav or they are the wrong format\n", cdPack);
+        sd::closeStream(cdStreamIdle);
+        sd::closeStream(cdStreamAccess);
+        cdFreeRings();
+        return;
+    }
+    cdPath(p, sizeof(p), "sequential.wav");
+    cdHaveSequential =
+        sd::fileExists(p) && sd::openStream(cdStreamSequential, p, VOICE_CD_SEQUENTIAL, cdRing[3], true);
+    cdReady = true;
+    Console.printf("[cdrom] %s%s%s, %lu Hz, gain %d%%%s\n", cdInfo.name[0] ? cdInfo.name : cdPack,
+                   cdInfo.author[0] ? " by " : "", cdInfo.author, static_cast<unsigned long>(cdRate),
+                   static_cast<int>(lroundf(cdInfo.gain * 100)), cdHaveSequential ? ", with sequential.wav" : "");
+}
+
+// Silence (a pack change, standby, power loss): from Stopped again, so a
+// disc still spinning spins up again when the disk's sounds come back.
+void cdStop() {
+    for (VoiceId id : {VOICE_CD_ONESHOT, VOICE_CD_IDLE, VOICE_CD_ACCESS, VOICE_CD_SEQUENTIAL}) audio::stop(id);
+    cdPlayer.reset();
+    cdLoopsPrimed = false;
+    cdLastBusy = false;
+    cdJumpPending = false;
+}
+
+const char* cdSoundFile(CdSound s) {
+    switch (s) {
+        case CdSound::SpinUp: return "spinup.wav";
+        case CdSound::SpinDown: return "spindown.wav";
+        case CdSound::TrayOpen: return "tray_open.wav";
+        case CdSound::TrayClose: return "tray_close.wav";
+        case CdSound::None: break;
+    }
+    return "";
+}
+
+// A one-shot on the CD-ROM's own voice. False if it didn't start (no such
+// file, or PLAY_SPINUP/PLAY_SPINDOWN off): the player then moves straight on.
+bool cdPlayOneShot(CdSound sound) {
+    audio::stop(VOICE_CD_ONESHOT);
+    if ((sound == CdSound::SpinUp && !settings.playSpinup) || (sound == CdSound::SpinDown && !settings.playSpindown))
+        return false;
+    char p[128];
+    cdPath(p, sizeof(p), cdSoundFile(sound));
+    if (!sd::fileExists(p)) return false;
+    return sd::openStream(cdStreamOneShot, p, VOICE_CD_ONESHOT, cdRing[0], false) && sd::prime(cdStreamOneShot) &&
+           audio::startStream(VOICE_CD_ONESHOT, cdRing[0], cdBaseLevel());
+}
+
+// Fill the loops' rings (while the spin-up plays), so they start seamlessly.
+void cdPrimeLoops() {
+    if (cdLoopsPrimed) return;
+    if (settings.playIdle) sd::prime(cdStreamIdle);
+    sd::prime(cdStreamAccess);
+    if (cdHaveSequential) sd::prime(cdStreamSequential);
+    cdLoopsPrimed = true;
+}
+
+void cdStartLoops() {
+    cdPrimeLoops();
+    if (settings.playIdle) audio::startStream(VOICE_CD_IDLE, cdRing[1], cdIdleLevel());
+    audio::startStream(VOICE_CD_ACCESS, cdRing[2], 0);
+    if (cdHaveSequential) audio::startStream(VOICE_CD_SEQUENTIAL, cdRing[3], 0);
+    cdLoopsPrimed = false;  // in use now: the next start primes them again
+}
+
+// Every RUN pass: the drive's next sound, and the loops' levels.
+void cdStep() {
+    if (!cdReady) return;
+    if (cdRate != audio::sampleRate()) {
+        if (!cdRateWarned) {
+            Console.printf("[cdrom] %s is %lu Hz but this pack plays at %lu Hz: no CD-ROM sounds with it\n", cdPack,
+                           static_cast<unsigned long>(cdRate), static_cast<unsigned long>(audio::sampleRate()));
+            cdRateWarned = true;
+        }
+        return;
+    }
+    cdRateWarned = false;
+    const OpticalState want = hddlink::optical();
+    const OpticalPlayer::Step step = cdPlayer.step(want, audio::isPlaying(VOICE_CD_ONESHOT));
+    if (step.stopLoops) {
+        for (VoiceId id : {VOICE_CD_IDLE, VOICE_CD_ACCESS, VOICE_CD_SEQUENTIAL}) audio::stop(id);
+        cdLastBusy = false;
+        cdJumpPending = false;
+    }
+    if (step.start != CdSound::None) {
+        const bool started = cdPlayOneShot(step.start);
+        Console.printf("[cdrom] %s%s\n", cdSoundFile(step.start), started ? "" : " (skipped)");
+        if (step.start == CdSound::SpinUp) cdPrimeLoops();
+    }
+    if (step.startLoops) cdStartLoops();
+    audio::setLevel(VOICE_CD_ONESHOT, cdBaseLevel());
+    if (!cdPlayer.running()) return;
+
+    // As the disk's: access.wav or sequential.wav at the access level while
+    // it reads, each moved to a random point once a burst is over.
+    const bool active = want.busy;
+    if (cdLastBusy && !active) {
+        cdOffMs = millis();
+        cdJumpPending = true;
+    }
+    if (active) cdJumpPending = false;
+    cdLastBusy = active;
+    if (!active && cdJumpPending && millis() - cdOffMs >= cfg::ACCESS_JUMP_QUIET_MS) {
+        cdJumpPending = false;
+        jumpLoop(VOICE_CD_ACCESS, cdStreamAccess);
+        if (cdHaveSequential) jumpLoop(VOICE_CD_SEQUENTIAL, cdStreamSequential);
+    }
+    const AccessSample sample = cdChooser.choose(want.cls, cdHaveSequential);
+    audio::setLevel(VOICE_CD_IDLE, cdIdleLevel());
+    audio::setLevel(VOICE_CD_ACCESS, cdAccessLevel(active && sample == AccessSample::Access));
+    if (cdHaveSequential)
+        audio::setLevel(VOICE_CD_SEQUENTIAL, cdAccessLevel(active && sample == AccessSample::Sequential));
+}
+
 void runStep() {
+    cdStep();
     const bool active = io::activity();
     const bool beepEnded = beeps::service();  // a beep owns the RGB LED while it plays
     if (active) lastActivityMs = millis();

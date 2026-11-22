@@ -14,6 +14,11 @@ enum VoiceId : uint8_t {
     VOICE_BEEP,         // memory
     VOICE_SEQUENTIAL,   // stream, looping (sequential.wav, with EXPERIMENTAL_HDDSYNTHPRO_SUPPORT)
     VOICE_DRIVE,        // the modelled drive (a pack with drive.json): synthesised, never ends
+    // The CD-ROM drive beside the disk (CDROM_SAMPLE_PACK, with the link):
+    VOICE_CD_ONESHOT,   // stream: spinup, spindown, tray_open, tray_close, one at a time
+    VOICE_CD_IDLE,      // stream, looping
+    VOICE_CD_ACCESS,    // stream, looping
+    VOICE_CD_SEQUENTIAL,  // stream, looping (if the pack has sequential.wav)
     VOICE_COUNT
 };
 

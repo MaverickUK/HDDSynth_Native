@@ -56,6 +56,9 @@ bool packExists(const char* name);  // false for ""
 // missing or not a WAV (the format may still be unplayable: check it).
 bool wavInfo(const char* path, WavInfo& info);
 bool fileExists(const char* path);
+// The first directory in `parent`, sorted case-insensitively (the CD-ROM's
+// packs are in /cdrom).
+bool firstDir(const char* parent, char* out, size_t outLen);
 // Find a pack: `preferred` if it exists, else the first directory in /samples.
 bool choosePack(const char* preferred, char* out, size_t outLen);
 // Position of `name` in the sorted list, or -1.

@@ -32,6 +32,7 @@
 #include "levels_format.h"
 #include "host_protocol.h"
 #include "link_parser.h"
+#include "optical_player.h"
 #include "tx_drip.h"
 #include "persist_format.h"
 #include "powerlog_format.h"
@@ -1684,6 +1685,97 @@ TEST(drive_follows_link_targets) {
     CHECK(e.lastSeekUs() > 5000);
 }
 
+TEST(link_optical_sentences) {
+    OpticalState o;
+    std::string l = sentenceLine("HDO,3,1,S,1,C");
+    CHECK(parseOpticalSentence(l.data(), l.size(), o));
+    CHECK(o.busy && o.cls == ActivityClass::Sequential && o.motor && !o.trayOpen);
+    for (const char* known : {"$HDO,3,0,I,0,C*56", "$HDO,3,1,S,1,C*4C", "$HDO,3,0,I,0,O*5A"}) {  // HDDSynthPro's
+        CHECK(parseOpticalSentence(known, strlen(known), o));
+    }
+    CHECK(o.trayOpen && !o.motor);
+    l = sentenceLine("HDO,4,0,I,0,O,later");  // a later version: extra fields ignored
+    CHECK(parseOpticalSentence(l.data(), l.size(), o));
+    CHECK(!o.busy && o.cls == ActivityClass::Idle && !o.motor && o.trayOpen);
+    for (const char* bad : {"HDO,2,1,S,1,C", "HDO,3,2,S,1,C", "HDO,3,1,X,1,C", "HDO,3,1,S,1,X", "HDO,3,1,S,1",
+                            "HDA,3,1,S,1,C"}) {
+        l = sentenceLine(bad);
+        CHECK(!parseOpticalSentence(l.data(), l.size(), o));
+    }
+    // The link's parser yields it, between the others.
+    LinkParser p;
+    int optical = 0;
+    for (const char* body : {"HDA,1,1,R,R", "HDO,3,1,R,1,C", "HDE,2,100,R,8"}) {
+        const std::string line = sentenceLine(body) + "\r\n";
+        for (char c : line)
+            if (p.feed(c) == LinkParser::Got::Optical) ++optical;
+    }
+    CHECK_EQ(optical, 1);
+    CHECK(p.optical().busy && p.optical().cls == ActivityClass::Random && p.optical().motor);
+    CHECK_EQ(int(p.valid()), 3);
+}
+
+// The CD-ROM's sounds follow the Bay's drive: spin up, run, spin down, the tray.
+TEST(optical_player_follows_the_drive) {
+    OpticalState off, spinning, ejected;
+    spinning.motor = true;
+    ejected.trayOpen = true;
+    OpticalPlayer pl;
+    // Nothing from the Bay: silence.
+    CHECK(pl.step(off, false).start == CdSound::None);
+    CHECK(pl.phase() == CdPhase::Stopped);
+    // The disc spins: spinup.wav, then the loops once it has played.
+    CHECK(pl.step(spinning, false).start == CdSound::SpinUp);
+    OpticalPlayer::Step s = pl.step(spinning, true);
+    CHECK(s.start == CdSound::None && !s.startLoops);
+    s = pl.step(spinning, false);
+    CHECK(s.startLoops && pl.running());
+    CHECK(!pl.step(spinning, false).startLoops);  // once
+    // It stops: the loops stop and spindown.wav plays, then silence.
+    s = pl.step(off, false);
+    CHECK(s.stopLoops && s.start == CdSound::SpinDown);
+    CHECK(pl.step(off, true).start == CdSound::None);
+    CHECK(pl.phase() == CdPhase::SpinningDown);
+    pl.step(off, false);
+    CHECK(pl.phase() == CdPhase::Stopped);
+
+    // An eject while it spins: the disc brakes first, then the tray opens.
+    pl.reset();
+    pl.step(spinning, false);
+    pl.step(spinning, false);
+    CHECK(pl.running());
+    ejected.motor = false;
+    s = pl.step(ejected, false);
+    CHECK(s.stopLoops && s.start == CdSound::SpinDown);
+    CHECK(pl.step(ejected, true).start == CdSound::None);
+    CHECK(pl.step(ejected, false).start == CdSound::TrayOpen);  // the brake is over
+    CHECK(pl.step(ejected, true).start == CdSound::None);
+    pl.step(ejected, false);
+    CHECK(pl.phase() == CdPhase::TrayOpen);
+    CHECK(pl.step(ejected, false).start == CdSound::None);  // it stays open
+    // A disc goes in: the tray closes, then the disc spins up.
+    CHECK(pl.step(spinning, false).start == CdSound::TrayClose);
+    CHECK(pl.step(spinning, true).start == CdSound::None);
+    CHECK(pl.step(spinning, false).start == CdSound::SpinUp);
+
+    // A closed-and-open in quick succession still plays both, in order.
+    pl.reset();
+    CHECK(pl.step(ejected, false).start == CdSound::TrayOpen);
+    CHECK(pl.step(off, true).start == CdSound::None);  // closed already, but the tray is still opening
+    CHECK(pl.step(off, false).start == CdSound::TrayClose);
+
+    // A pack without the sounds (each "finished" at once) still runs its loops.
+    pl.reset();
+    CHECK(pl.step(spinning, false).start == CdSound::SpinUp);
+    CHECK(pl.step(spinning, false).startLoops);
+
+    // Stopped mid-spin-up: spindown.wav replaces it, and no loops.
+    pl.reset();
+    pl.step(spinning, false);
+    s = pl.step(off, true);
+    CHECK(s.start == CdSound::SpinDown && !s.startLoops);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) samplesDir = argv[1];
     RUN(wav_basic_pcm);
@@ -1770,6 +1862,8 @@ int main(int argc, char** argv) {
     RUN(drive_timing_rotation_and_transfer);
     RUN(drive_follows_link_targets);
     RUN(link_reply_drips_into_the_fifo);
+    RUN(link_optical_sentences);
+    RUN(optical_player_follows_the_drive);
     std::printf("\n%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

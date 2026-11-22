@@ -16,6 +16,8 @@ bool wasPresent = false;
 LinkParser parser;
 LinkWatch watch;
 HeadFeed headFeed;
+LinkWatch opticalWatch;
+uint32_t opticalCount = 0;
 uint32_t sent = 0;
 TxDrip tx;  // the $HDM going out (send), fed to the FIFO by service()
 
@@ -62,6 +64,11 @@ void service() {
                 watch.seen(now);
                 headFeed.got(parser.head(), now);
                 break;
+            case LinkParser::Got::Optical:
+                watch.seen(now);
+                opticalWatch.seen(now);
+                ++opticalCount;
+                break;
             case LinkParser::Got::Nothing: break;
         }
     }
@@ -76,6 +83,8 @@ bool enabled() { return started; }
 bool present() { return started && watch.present(millis()); }
 LinkState state() { return parser.state(); }
 const HeadFeed& heads() { return headFeed; }
+bool opticalPresent() { return started && opticalWatch.present(millis()); }
+OpticalState optical() { return opticalPresent() ? parser.optical() : OpticalState{}; }
 
 void send(const char* body) {
     if (!started) return;

@@ -78,6 +78,10 @@ bool parseSettingsJson(const char* json, Settings& s) {
         const int ms = doc["OLED_SAMPLE_MS"].as<int>();
         s.oledSampleMs = static_cast<uint32_t>(ms < 50 ? 50 : ms);  // faster than 50 ms is just noise
     }
+    if (doc["CDROM_ENABLED"].is<bool>()) s.cdrom = doc["CDROM_ENABLED"];
+    if (doc["CDROM_SAMPLE_PACK"].is<const char*>()) {
+        strncpy(s.cdromPack, doc["CDROM_SAMPLE_PACK"].as<const char*>(), sizeof(s.cdromPack) - 1);
+    }
     if (doc["SAMPLE_PACK"].is<const char*>()) {
         strncpy(s.samplePack, doc["SAMPLE_PACK"].as<const char*>(), sizeof(s.samplePack) - 1);
     }
@@ -90,5 +94,5 @@ void printSettings(const Settings& s) {
                   s.samplePack, static_cast<int>(s.volume * 100 + 0.5f), static_cast<int>(s.balance * 100 + 0.5f), s.simulationMode, s.playSpinup, s.playSpindown,
                   s.playIdle, static_cast<unsigned long>(s.accessHoldMs), s.powerDetection, s.randomSamplePack,
                   s.alwaysPlayJingle, s.demoMode, s.saveVolumeBalance, s.oledEnabled,
-                  static_cast<unsigned long>(s.standbyMinutes), s.hddSynthPro);
+                  static_cast<unsigned long>(s.standbyMinutes), s.hddSynthPro, s.cdrom, s.cdromPack);
 }

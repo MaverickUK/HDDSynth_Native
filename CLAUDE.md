@@ -264,6 +264,19 @@ Keep it in sync when adding or changing a key (`settings.cpp`).
   streams with no underruns, the LED and sample switch); not yet with real link
   lines or HDDSynthPro.
 
+- A CD-ROM drive beside the disk (branch `cdrom-sounds`, 0.26.0-cd.1):
+  HDDSynthPro's `$HDO,3,<busy>,<class>,<motor>,<tray>` (`link_parser`,
+  `hddlink::optical()`, all off a second after the last) drives
+  `OpticalPlayer` (`optical_player.h`, pure, host-tested: which one-shot
+  next, when the loops run), and main.cpp's `cd*` functions play a pack from
+  `/cdrom/<name>/` (a disk's files plus `tray_open.wav`, `tray_close.wav`)
+  on `VOICE_CD_ONESHOT/IDLE/ACCESS/SEQUENTIAL`, only in RUN and only at the
+  disk's pack's rate. `stopPackVoices()`, `halt()` and power loss call
+  `cdStop()`. Its four rings (128 KB) come from the heap at boot only with a
+  CD-ROM pack on the card, before the disk's pack loads: big spindowns may
+  then stream (check `PB_MicroScience612`). Built and host-tested; not yet
+  run on the board.
+
 - USB companion app (`companion/`, Python + PySide6, its own version; v0.19.0
   firmware): `$` lines on the USB console go to `usb_host.*` (assembled by
   `LineAssembler` in `handleSerial()`, so `-` inside a sentence isn't

@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org). Linked versions have a
 release with its UF2 on the
 [releases page](https://github.com/MaverickUK/HDDSynth_Native/releases).
 
+## [Unreleased]
+
+### Added
+- **A CD-ROM drive beside the disk** (0.26.0-cd.1, branch `cdrom-sounds`, from 0.24.1; HDDSynthPro 0.36.0-cd.1 sends it): `$HDO,3,<busy>,<class>,<motor>,<tray>` from an HDDSynthPro with a CD-ROM drive (`link_parser`, host-tested) plays a CD-ROM pack from `/cdrom/<name>/` (`CDROM_SAMPLE_PACK`, default the first there; `CDROM_ENABLED`): a disk's pack plus `tray_open.wav` and `tray_close.wav`. `OpticalPlayer` (`optical_player.h`, pure, host-tested) puts its one-shots in a drive's order on their own voice (braking before the tray opens, the tray closing before the spin-up) and runs its idle, access and sequential loops while the disc is at speed, as the disk's. Four voices (`VOICE_CD_*`) and 128 KB of rings, allocated at boot only when the card has a CD-ROM pack; ten streams open at most (six before). It plays only at the disk's pack's sample rate. Built and host-tested; not yet run on the board.
+
 ## [0.24.1] - 2026-11-17
 
 ### Fixed
